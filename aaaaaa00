@@ -1,11 +1,12 @@
 --========================================================
--- BRVS: Rayfield-powered Tools (Auto Buy, Auto Collect, Utils)
+-- BRVS: Rayfield-powered Tools (Auto Buy, Auto Collect, Inventory, Utils)
 --========================================================
 
 --// Services (prefixed)
 local BRVS_Players = game:GetService("Players")
 local BRVS_ReplicatedStorage = game:GetService("ReplicatedStorage")
 local BRVS_Lighting = game:GetService("Lighting")
+local BRVS_Workspace = game:GetService("Workspace")
 
 local BRVS_Player = BRVS_Players.LocalPlayer
 local BRVS_UserId = BRVS_Player.UserId
@@ -19,20 +20,18 @@ local BRVS_EGG_NAMES = {
 	"SaberCubEgg","UnicornEgg","OctopusEgg","AncientEgg","SeaDragonEgg",
 	"UnicornProEgg","GeneralKongEgg","PegasusEgg",
 }
--- includes "None" for eggs with missing/empty M attribute
 local BRVS_MUTATIONS = { "None","Golden","Diamond","Electirc","Fire","Dino","Snow" }
 
 -- Rayfield display lists with explicit "Any"
 local BRVS_EGG_OPTIONS = (function() local t={"Any"} for _,v in ipairs(BRVS_EGG_NAMES) do table.insert(t,v) end return t end)()
 local BRVS_MUTATION_OPTIONS = (function() local t={"Any"} for _,v in ipairs(BRVS_MUTATIONS) do table.insert(t,v) end return t end)()
 
--- >>> Food options now mirror egg/mutation behavior (with "Any")
-local BRVS_FOOD_BASE = {
+-- Food options (multi-select)
+local BRVS_FOOD_OPTIONS = {
 	"Strawberry","Blueberry","Watermelon","Apple","Orange","Corn","Banana","Grape",
 	"Pear","Pineapple","DragonFruit","GoldMango","BloodstoneCycad","ColossalPinecone",
 	"VoltGinkgo","DeepseaPearlFruit","Durian",
 }
-local BRVS_FOOD_OPTIONS = (function() local t={"Any"} for _,v in ipairs(BRVS_FOOD_BASE) do table.insert(t,v) end return t end)()
 
 --// World paths
 local BRVS_ART_FOLDER = workspace:WaitForChild("Art")
@@ -61,34 +60,19 @@ local function BRVS_ContainsOrAny(list, value)
 	if not list or #list == 0 then return true end
 	for _, v in ipairs(list) do
 		if v == "Any" then return true end
-	end
-	for _, v in ipairs(list) do
 		if v == value then return true end
 	end
 	return false
 end
 
--- >>> Rayfield dropdown normalizer (string / array / map -> array of strings)
-local function BRVS_AsArray(opts)
-	if not opts then return {} end
-	local t = type(opts)
-	if t == "string" then return { opts } end
-	if t ~= "table" then return {} end
-	local out = {}
-	if opts[1] ~= nil then
-		for _, v in ipairs(opts) do table.insert(out, tostring(v)) end
-	else
-		for k, v in pairs(opts) do
-			if v == true then table.insert(out, tostring(k))
-			elseif type(v) == "string" then table.insert(out, v) end
-		end
+-- NEW: safe remote getter (non-blocking)
+local function BRVS_GetRemote(pathArray)
+	local node = BRVS_ReplicatedStorage
+	for _, name in ipairs(pathArray) do
+		node = node and node:FindFirstChild(name)
+		if not node then return nil end
 	end
-	return out
-end
-
--- >>> Food selection matcher (same semantics as eggs/mutations)
-local function BRVS_FoodSelected(name)
-	return BRVS_ContainsOrAny(BRVS_AsArray(_G.__brvs_selected_food or {}), name) -- (used only if you need it elsewhere)
+	return node
 end
 
 --========================================================
@@ -107,11 +91,10 @@ local BRVS_SelMutations = {}  -- {} or includes "Any" / "None"
 local BRVS_AutoBuyEnabled = false
 local BRVS_LastFireAt = {} -- [Instance]=time
 
--- >>> Food auto-buy state
-local BRVS_SelectedFood = {} -- multi-select strings (supports "Any")
-_G.__brvs_selected_food = BRVS_SelectedFood
+-- Food auto-buy state
+local BRVS_SelectedFood = {} -- multi-select strings
 local BRVS_FoodBuyEnabled = false
-local BRVS_FoodBuyInterval = 2
+local BRVS_FoodBuyInterval = 0.2 -- fixed delay (seconds)
 local BRVS_FoodBuyThread
 
 -- Anti AFK (jump)
@@ -124,7 +107,6 @@ local BRVS_SavedStates = {}  -- [Instance] = original Enabled (emitters/lights)
 local BRVS_Terrain = workspace:FindFirstChildOfClass("Terrain")
 
 -- Auto Collect (new tab)
--- (kept your Big Pet placeholders)
 local BRVS_PetCollectEnabled = false
 local BRVS_PetCollectInterval = 3
 local BRVS_PetCollectThread
@@ -132,15 +114,6 @@ local BRVS_PetCollectThread
 local BRVS_BigPetCollectEnabled = false
 local BRVS_BigPetCollectInterval = 5
 local BRVS_BigPetCollectThread
-
--- >>> Pet Claim feature state
-local BRVS_PetsFolder = workspace:WaitForChild("Pets")
-local BRVS_PetClaimEnabled = false
-local BRVS_PetClaimInterval = 3
-local BRVS_PetClaimThread
-local BRVS_PetClaimConns = {}
-local BRVS_PetClaimPerModel = {}
-local BRVS_PetClaiming = setmetatable({}, { __mode = "k" })
 
 --========================================================
 -- Anti-AFK (jump) helpers (prefixed)
@@ -252,7 +225,6 @@ end
 
 local BRVS_LG_active = false
 local function BRVS_ApplyLowGraphics()
-	-- Lighting flatten
 	BRVS_s(BRVS_Lighting,"GlobalShadows",false)
 	BRVS_s(BRVS_Lighting,"EnvironmentSpecularScale",0)
 	BRVS_s(BRVS_Lighting,"EnvironmentDiffuseScale",0)
@@ -260,7 +232,6 @@ local function BRVS_ApplyLowGraphics()
 	for fx in pairs(BRVS_LG_original.postFX) do if fx and fx.Parent then BRVS_s(fx,"Enabled",false) end end
 	if BRVS_LG_original.atmo and BRVS_LG_original.atmo.obj then local A=BRVS_LG_original.atmo.obj
 		BRVS_s(A,"Density",0); BRVS_s(A,"Glare",0); BRVS_s(A,"Haze",0); BRVS_s(A,"MieScatteringScale",0) end
-	-- Terrain calm water
 	if BRVS_Terrain then
         BRVS_s(BRVS_Terrain, "Decoration", false)
         BRVS_s(BRVS_Terrain, "WaterWaveSize", 0)
@@ -269,7 +240,6 @@ local function BRVS_ApplyLowGraphics()
         BRVS_s(BRVS_Terrain, "WaterTransparency", 0)
         BRVS_s(BRVS_Terrain, "WaterColor", Color3.fromRGB(85, 170, 255))
 	end
-	-- Hide textures/decals
 	if BRVS_LG_CONFIG.DisableTextures then
 		for o in pairs(BRVS_LG_original.decals)   do if o and o.Parent then BRVS_s(o,"Transparency",1) end end
 		for o in pairs(BRVS_LG_original.textures) do if o and o.Parent then BRVS_s(o,"Transparency",1) end end
@@ -278,7 +248,6 @@ local function BRVS_ApplyLowGraphics()
 		for o in pairs(BRVS_LG_original.surfaceA) do if o and o.Parent then
 			BRVS_s(o,"ColorMap",""); BRVS_s(o,"MetalnessMap",""); BRVS_s(o,"NormalMap",""); BRVS_s(o,"RoughnessMap","") end end
 	end
-	-- Block non-player animations
 	if BRVS_LG_CONFIG.DisableNonPlayerAnimations then BRVS_LG_applyAnimationBlock() end
 	BRVS_LG_active = true
 end
@@ -300,7 +269,6 @@ local function BRVS_RestoreLowGraphics()
 	BRVS_LG_active = false
 end
 
--- Ultra Low combiner
 local function BRVS_ApplyUltraLow()
 	for _, inst in ipairs(workspace:GetDescendants()) do
 		if inst:IsA("ParticleEmitter") or inst:IsA("Trail") or inst:IsA("Beam") or inst:IsA("Highlight")
@@ -334,10 +302,8 @@ local function BRVS_CurrentSelectionsMatch(egg)
 	local rawM    = egg:GetAttribute("M")  -- may be nil or ""
 	local mutVal  = rawM or "(no value)"
 
-	-- Egg Name filter
 	local nameOk = BRVS_ContainsOrAny(BRVS_SelEggNames, nameVal)
 
-	-- Mutation filter (supports Any + None)
 	local mutOk
 	if not BRVS_SelMutations or #BRVS_SelMutations == 0 then
 		mutOk = true
@@ -373,12 +339,12 @@ end
 
 local function BRVS_PrintMatches()
 	if not BRVS_IslandFolder then return end
-	print("=== BRVS Matching Eggs ===")
+	-- print("=== BRVS Matching Eggs ===")
 	for _, e in ipairs(BRVS_IslandFolder:GetChildren()) do
 		local tVal = e:GetAttribute("T") or "(no value)"
 		local mVal = e:GetAttribute("M") or "(no value)"
 		if BRVS_CurrentSelectionsMatch(e) then
-			print(string.format(" - %s | Name: %s | Mutation: %s", e.Name, tVal, mVal))
+			-- print(string.format(" - %s | Name: %s | Mutation: %s", e.Name, tVal, mVal))
 		end
 	end
 end
@@ -420,103 +386,150 @@ local function BRVS_BindIsland(newName)
 end
 
 --========================================================
--- >>> Pet Claim core
-local function BRVS_PetClaim_ClearConns()
-	for _, c in ipairs(BRVS_PetClaimConns) do pcall(function() c:Disconnect() end) end
-	table.clear(BRVS_PetClaimConns)
-	for m, bag in pairs(BRVS_PetClaimPerModel) do
-		for _, c in ipairs(bag) do pcall(function() c:Disconnect() end) end
+-- LIVE FOOD STOCK (PlayerGui.Data.FoodStore.LST)
+local BRVS_FoodStock      = {}   -- { [FoodName] = number }
+local BRVS_FoodStockConns = {}
+local BRVS_LST = nil
+
+local function BRVS_DisconnectStock()
+	for _, c in ipairs(BRVS_FoodStockConns) do pcall(function() c:Disconnect() end) end
+	table.clear(BRVS_FoodStockConns)
+end
+
+local function BRVS_SnapshotAttrs(lst)
+	table.clear(BRVS_FoodStock)
+	for k, v in pairs(lst:GetAttributes()) do
+		BRVS_FoodStock[k] = tonumber(v) or 0
 	end
-	table.clear(BRVS_PetClaimPerModel)
-end
-
-local function BRVS_Pet_GetRoot(pet)
-	if pet and pet:IsA("Model") then return pet:FindFirstChild("RootPart") end
-end
-
-local function BRVS_Pet_CanClaim(pet)
-	if not (pet and pet:IsA("Model")) then return false end
-	if pet:GetAttribute("UserId") ~= BRVS_UserId then return false end
-	local root = BRVS_Pet_GetRoot(pet)
-	local re = root and root:FindFirstChild("RE")
-	return re and typeof(re.FireServer) == "function"
-end
-
-local function BRVS_Pet_Claim(pet)
-	if not BRVS_Pet_CanClaim(pet) then return end
-	if BRVS_PetClaiming[pet] then return end
-	BRVS_PetClaiming[pet] = true
-	task.wait(0.1)
-	if BRVS_Pet_CanClaim(pet) then
-		pet.RootPart.RE:FireServer("Claim")
-	end
-	task.wait(0.1)
-	BRVS_PetClaiming[pet] = nil
-end
-
-local function BRVS_Pet_WatchModel(pet)
-	if not (pet and pet:IsA("Model")) then return end
-	if BRVS_PetClaimPerModel[pet] then return end
-	BRVS_PetClaimPerModel[pet] = {}
-
-	if BRVS_Pet_CanClaim(pet) then
-		task.spawn(BRVS_Pet_Claim, pet)
-	else
-		local c1 = pet:GetAttributeChangedSignal("UserId"):Connect(function()
-			if BRVS_PetClaimEnabled and BRVS_Pet_CanClaim(pet) then
-				task.spawn(BRVS_Pet_Claim, pet)
-			end
-		end)
-		table.insert(BRVS_PetClaimPerModel[pet], c1)
-	end
-
-	local c2 = pet.AncestryChanged:Connect(function(_, parent)
-		if not parent then
-			local bag = BRVS_PetClaimPerModel[pet]
-			if bag then for _, c in ipairs(bag) do pcall(function() c:Disconnect() end) end end
-			BRVS_PetClaimPerModel[pet] = nil
-			BRVS_PetClaiming[pet] = nil
+	for _, child in ipairs(lst:GetChildren()) do
+		if child:IsA("IntValue") or child:IsA("NumberValue") then
+			BRVS_FoodStock[child.Name] = tonumber(child.Value) or 0
 		end
-	end)
-	table.insert(BRVS_PetClaimPerModel[pet], c2)
+	end
 end
 
-local function BRVS_Pet_Start()
-	BRVS_PetClaimEnabled = true
-	BRVS_PetClaim_ClearConns()
+function BRVS_BindFoodStock()
+	BRVS_DisconnectStock()
 
-	for _, pet in ipairs(BRVS_PetsFolder:GetChildren()) do
-		BRVS_Pet_WatchModel(pet)
-	end
+	local pg = BRVS_Player:WaitForChild("PlayerGui")
+	local data = pg:WaitForChild("Data")
+	local fs = data:WaitForChild("FoodStore")
+	local lst = fs:WaitForChild("LST")
+	BRVS_LST = lst
 
-	table.insert(BRVS_PetClaimConns, BRVS_PetsFolder.ChildAdded:Connect(function(pet)
-		if BRVS_PetClaimEnabled then BRVS_Pet_WatchModel(pet) end
+	BRVS_SnapshotAttrs(lst)
+
+	table.insert(BRVS_FoodStockConns, lst.AttributeChanged:Connect(function(attr)
+		local val = lst:GetAttribute(attr)
+		BRVS_FoodStock[attr] = tonumber(val) or 0
 	end))
 
-	BRVS_PetClaimThread = task.spawn(function()
-		while BRVS_PetClaimEnabled do
-			for _, pet in ipairs(BRVS_PetsFolder:GetChildren()) do
-				if not BRVS_PetClaimPerModel[pet] then
-					BRVS_Pet_WatchModel(pet)
-				elseif BRVS_Pet_CanClaim(pet) then
-					task.spawn(BRVS_Pet_Claim, pet)
-				end
-				if not BRVS_PetClaimEnabled then break end
-			end
-			local t = math.max(0.1, BRVS_PetClaimInterval or 3)
-			local elapsed = 0
-			while BRVS_PetClaimEnabled and elapsed < t do
-				task.wait(0.1)
-				elapsed = elapsed + 0.1 -- fixed Luau syntax
-			end
+	for _, child in ipairs(lst:GetChildren()) do
+		if child:IsA("IntValue") or child:IsA("NumberValue") then
+			table.insert(BRVS_FoodStockConns, child:GetPropertyChangedSignal("Value"):Connect(function()
+				BRVS_FoodStock[child.Name] = tonumber(child.Value) or 0
+			end))
 		end
-	end)
+	end
+
+	table.insert(BRVS_FoodStockConns, lst.ChildAdded:Connect(function(child)
+		if child:IsA("IntValue") or child:IsA("NumberValue") then
+			BRVS_FoodStock[child.Name] = tonumber(child.Value) or 0
+			table.insert(BRVS_FoodStockConns, child:GetPropertyChangedSignal("Value"):Connect(function()
+				BRVS_FoodStock[child.Name] = tonumber(child.Value) or 0
+			end))
+		end
+	end))
+
+	return BRVS_LST
 end
 
-local function BRVS_Pet_Stop()
-	BRVS_PetClaimEnabled = false
-	BRVS_PetClaimThread = nil
-	BRVS_PetClaim_ClearConns()
+local function BRVS_HasFoodStock(name) return (BRVS_FoodStock[name] or 0) > 0 end
+
+--========================================================
+-- INVENTORY: Eggs (PlayerGui.Data.Egg)
+local BRVS_InvEggConns = {}
+local BRVS_InvEggPerItemConns = {}
+local BRVS_InvEggLabel -- set after creating tab
+
+local function BRVS_ClearInvEggConns()
+	for _,c in ipairs(BRVS_InvEggConns) do pcall(function() c:Disconnect() end) end
+	table.clear(BRVS_InvEggConns)
+	for inst, list in pairs(BRVS_InvEggPerItemConns) do
+		for _,c in ipairs(list) do pcall(function() c:Disconnect() end) end
+		BRVS_InvEggPerItemConns[inst] = nil
+	end
+end
+
+local function BRVS_HumanEggName(tVal)
+	local base = tostring(tVal or "Unknown")
+	base = base:gsub("Egg$", "")
+	base = (base:sub(1,1):upper() .. base:sub(2):lower())
+	return base .. " egg"
+end
+
+local function BRVS_RebuildEggInventoryText(eggsFolder)
+	if not BRVS_InvEggLabel then return end
+	if not eggsFolder then
+		BRVS_InvEggLabel:Set("Egg:\n- (none)")
+		return
+	end
+
+	local counts = {}   -- key = T .. "\0" .. (M or "")
+	for _, egg in ipairs(eggsFolder:GetChildren()) do
+		local T = egg:GetAttribute("T")
+		local M = egg:GetAttribute("M")
+		local key = tostring(T or "Unknown") .. "\0" .. tostring(M or "")
+		counts[key] = (counts[key] or 0) + 1
+	end
+
+	local lines = {}
+	for key, n in pairs(counts) do
+		local T, M = key:match("^(.-)\0(.*)$")
+		local name = BRVS_HumanEggName(T)
+		local line = (M and M ~= "") and string.format("- %s | %s (%d)", name, M, n) or string.format("- %s (%d)", name, n)
+		table.insert(lines, line)
+	end
+	table.sort(lines, function(a,b) return a:lower()<b:lower() end)
+
+	local text = "Egg:"
+	if #lines == 0 then
+		text = text .. "\n- (none)"
+	else
+		for _,ln in ipairs(lines) do text = text .. "\n" .. ln end
+	end
+	BRVS_InvEggLabel:Set(text)
+end
+
+local function BRVS_BindInventoryEggs()
+	BRVS_ClearInvEggConns()
+
+	local pg = BRVS_Player:WaitForChild("PlayerGui")
+	local data = pg:WaitForChild("Data")
+	local eggs = data:WaitForChild("Egg")  -- array of uid nodes with attributes T and optional M
+
+	BRVS_RebuildEggInventoryText(eggs)
+
+	table.insert(BRVS_InvEggConns, eggs.ChildAdded:Connect(function(child)
+		local list = {}
+		table.insert(list, child:GetAttributeChangedSignal("T"):Connect(function() BRVS_RebuildEggInventoryText(eggs) end))
+		table.insert(list, child:GetAttributeChangedSignal("M"):Connect(function() BRVS_RebuildEggInventoryText(eggs) end))
+		BRVS_InvEggPerItemConns[child] = list
+		BRVS_RebuildEggInventoryText(eggs)
+	end))
+	table.insert(BRVS_InvEggConns, eggs.ChildRemoved:Connect(function(child)
+		local list = BRVS_InvEggPerItemConns[child]
+		if list then for _,c in ipairs(list) do pcall(function() c:Disconnect() end) end end
+		BRVS_InvEggPerItemConns[child] = nil
+		BRVS_RebuildEggInventoryText(eggs)
+	end))
+
+	for _, child in ipairs(eggs:GetChildren()) do
+		local list = {}
+		table.insert(list, child:GetAttributeChangedSignal("T"):Connect(function() BRVS_RebuildEggInventoryText(eggs) end))
+		table.insert(list, child:GetAttributeChangedSignal("M"):Connect(function() BRVS_RebuildEggInventoryText(eggs) end))
+		BRVS_InvEggPerItemConns[child] = list
+	end
 end
 
 --========================================================
@@ -524,25 +537,21 @@ end
 local BRVS_Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 local BRVS_Window = BRVS_Rayfield:CreateWindow({
-	Name = "Not Build A Zoo | Braxsveid",
+	Name = "Build A Zoo (SNOW) | @braxsveid",
 	Icon = "egg",
-	LoadingTitle = "Loading y0ur stuff...",
-	LoadingSubtitle = "by Braxsveid",
+	LoadingTitle = "Rayfield Interface Suite",
+	LoadingSubtitle = "by Sirius",
 	ShowText = "Rayfield",
 	Theme = "Default",
 	ToggleUIKeybind = "K",
-
 	DisableRayfieldPrompts = false,
 	DisableBuildWarnings = false,
-
 	ConfigurationSaving = {
 		Enabled = true,
 		FolderName = "EggTools",
 		FileName = "EggTools_Config"
 	},
-
 	Discord = { Enabled = false },
-
 	KeySystem = false,
 })
 
@@ -550,15 +559,15 @@ local BRVS_Window = BRVS_Rayfield:CreateWindow({
 local BRVS_AutoTab = BRVS_Window:CreateTab("Auto Buy", "shopping-bag")
 local BRVS_IslandLabel = BRVS_AutoTab:CreateLabel(BRVS_IslandName and ("Island: "..BRVS_IslandName) or "Island: (none)")
 
-BRVS_AutoTab:CreateSection("Auto buy egg")
+BRVS_AutoTab:CreateSection("Filters")
 local BRVS_EggDD = BRVS_AutoTab:CreateDropdown({
-	Name = "Egg Name(s)",
+	Name = "Name(s)",
 	Options = BRVS_EGG_OPTIONS,
 	CurrentOption = {},
 	MultipleOptions = true,
 	Flag = "EggNames",
 	Callback = function(options)
-		BRVS_SelEggNames = BRVS_AsArray(options)
+		BRVS_SelEggNames = options or {}
 		BRVS_PrintMatches()
 		BRVS_RescanAutoBuy()
 	end,
@@ -570,11 +579,13 @@ local BRVS_MutDD = BRVS_AutoTab:CreateDropdown({
 	MultipleOptions = true,
 	Flag = "Mutations",
 	Callback = function(options)
-		BRVS_SelMutations = BRVS_AsArray(options)
+		BRVS_SelMutations = options or {}
 		BRVS_PrintMatches()
 		BRVS_RescanAutoBuy()
 	end,
 })
+
+BRVS_AutoTab:CreateSection("Automation")
 local BRVS_AutoBuyToggle = BRVS_AutoTab:CreateToggle({
 	Name = "Auto Buy Eggs",
 	CurrentValue = false,
@@ -591,7 +602,7 @@ local BRVS_AutoBuyToggle = BRVS_AutoTab:CreateToggle({
 })
 
 BRVS_AutoTab:CreateSection("Food Store")
--- >>> Food multi-select with "Any" + normalization
+-- Food multi-select
 local BRVS_FoodDD = BRVS_AutoTab:CreateDropdown({
 	Name = "Food (multi-select)",
 	Options = BRVS_FOOD_OPTIONS,
@@ -599,23 +610,11 @@ local BRVS_FoodDD = BRVS_AutoTab:CreateDropdown({
 	MultipleOptions = true,
 	Flag = "FoodSelect",
 	Callback = function(options)
-		BRVS_SelectedFood = BRVS_AsArray(options)
-		_G.__brvs_selected_food = BRVS_SelectedFood
+		BRVS_SelectedFood = options or {}
 	end,
 })
--- Food buy interval (slider)
-local BRVS_FoodIntervalSlider = BRVS_AutoTab:CreateSlider({
-	Name = "Food Buy Interval",
-	Range = {1, 60},
-	Increment = 1,
-	Suffix = "sec",
-	CurrentValue = BRVS_FoodBuyInterval,
-	Flag = "FoodBuyInterval",
-	Callback = function(val)
-		BRVS_FoodBuyInterval = tonumber(val) or BRVS_FoodBuyInterval
-	end,
-})
--- Auto Buy Food toggle
+
+-- Auto Buy Food toggle (uses LIVE STOCK, fixed 0.2s tick)
 local BRVS_AutoBuyFoodToggle = BRVS_AutoTab:CreateToggle({
 	Name = "Auto Buy Food",
 	CurrentValue = false,
@@ -630,27 +629,18 @@ local BRVS_AutoBuyFoodToggle = BRVS_AutoTab:CreateToggle({
 		BRVS_FoodBuyThread = task.spawn(function()
 			BRVS_Rayfield:Notify({ Title = "Food Store", Content = "Auto Buy Food: ON", Duration = 2.5, Image = "shopping-cart" })
 			while BRVS_FoodBuyEnabled do
-				-- >>> Build the list using Any/empty = all
-				local selected = BRVS_AsArray(BRVS_SelectedFood)
-				local buyAll = (#selected == 0)
-				for _, s in ipairs(selected) do if s == "Any" then buyAll = true break end end
-				local foods = buyAll and BRVS_FOOD_BASE or selected
-
-				local remote = BRVS_ReplicatedStorage:FindFirstChild(BRVS_FOOD_REMOTE_PATH[1])
-				remote = remote and remote:FindFirstChild(BRVS_FOOD_REMOTE_PATH[2])
+				local foods = (BRVS_SelectedFood and #BRVS_SelectedFood > 0) and BRVS_SelectedFood or {}
+				local remote = BRVS_GetRemote(BRVS_FOOD_REMOTE_PATH)
 				if #foods > 0 and remote and remote:IsA("RemoteEvent") then
 					for _, item in ipairs(foods) do
 						if not BRVS_FoodBuyEnabled then break end
-						remote:FireServer(item) -- {"<FoodName>"}
-						task.wait(0.05)
+						if BRVS_HasFoodStock(item) then
+							remote:FireServer(item)
+							task.wait(0.05)
+						end
 					end
 				end
-				local t = math.max(0.1, BRVS_FoodIntervalSlider.CurrentValue or BRVS_FoodBuyInterval or 2)
-				local elapsed = 0
-				while BRVS_FoodBuyEnabled and elapsed < t do
-					task.wait(0.1)
-					elapsed = elapsed + 0.1
-				end
+				task.wait(BRVS_FoodBuyInterval) -- fixed 0.2s tick
 			end
 		end)
 	end,
@@ -659,36 +649,69 @@ local BRVS_AutoBuyFoodToggle = BRVS_AutoTab:CreateToggle({
 -- =================== TAB: Auto Collect ===================
 local BRVS_CollectTab = BRVS_Window:CreateTab("Auto Collect", "package")
 
--- >>> Pet Claim
-BRVS_CollectTab:CreateSection("Auto Claim Pet")
+BRVS_CollectTab:CreateSection("Auto Collect Pet")
 local BRVS_PetDelaySlider = BRVS_CollectTab:CreateSlider({
-	Name = "Pet Claim Interval",
+	Name = "Pet Delay",
 	Range = {1, 60},
 	Increment = 1,
 	Suffix = "sec",
-	CurrentValue = BRVS_PetClaimInterval,
-	Flag = "PetClaimDelay",
+	CurrentValue = BRVS_PetCollectInterval,
+	Flag = "PetCollectDelay",
 	Callback = function(val)
-		BRVS_PetClaimInterval = tonumber(val) or BRVS_PetClaimInterval
-	end,
-})
-local BRVS_PetToggle = BRVS_CollectTab:CreateToggle({
-	Name = "Auto Claim Pets (owned by you)",
-	CurrentValue = false,
-	Flag = "PetClaimToggle",
-	Callback = function(on)
-		if on then
-			BRVS_PetClaimInterval = BRVS_PetDelaySlider.CurrentValue or BRVS_PetClaimInterval
-			BRVS_Pet_Start()
-			BRVS_Rayfield:Notify({ Title = "Pet Claim", Content = "Auto-claim enabled", Duration = 3, Image = "package" })
-		else
-			BRVS_Pet_Stop()
-			BRVS_Rayfield:Notify({ Title = "Pet Claim", Content = "Auto-claim disabled", Duration = 2, Image = "ban" })
-		end
+		BRVS_PetCollectInterval = tonumber(val) or BRVS_PetCollectInterval
 	end,
 })
 
--- Big Pet (kept as TODO)
+-- Pet claimer using PlayerGui.Data.Pets → UIDs
+local function BRVS_ClaimMyPetsOnce()
+	local pg = BRVS_Player:FindFirstChild("PlayerGui"); if not pg then return end
+	local data = pg:FindFirstChild("Data"); if not data then return end
+	local petsNode = data:FindFirstChild("Pets"); if not petsNode then return end
+
+	local workspacePets = BRVS_Workspace:FindFirstChild("Pets")
+	if not workspacePets then return end
+
+	for _, uidObj in ipairs(petsNode:GetChildren()) do
+		local uid = uidObj.Name
+		if uidObj:IsA("StringValue") and uidObj.Value and uidObj.Value ~= "" then
+			uid = uidObj.Value
+		end
+		if uid and uid ~= "" then
+			local petModel = workspacePets:FindFirstChild(uid) or workspacePets:WaitForChild(uid, 1)
+			if petModel and petModel:IsA("Model") then
+				local root = petModel:FindFirstChild("RootPart")
+				local re = root and root:FindFirstChild("RE")
+				if re and re.FireServer then
+					re:FireServer("Claim")
+					task.wait(0.1)
+				end
+			end
+		end
+	end
+end
+
+local BRVS_PetToggle = BRVS_CollectTab:CreateToggle({
+	Name = "Auto Collect Pet",
+	CurrentValue = false,
+	Flag = "PetCollectToggle",
+	Callback = function(on)
+		BRVS_PetCollectEnabled = on
+		BRVS_PetCollectThread = nil
+		if not BRVS_PetCollectEnabled then return end
+		BRVS_PetCollectThread = task.spawn(function()
+			while BRVS_PetCollectEnabled do
+				BRVS_ClaimMyPetsOnce()
+				local t = math.max(0.1, BRVS_PetDelaySlider.CurrentValue or BRVS_PetCollectInterval or 3)
+				local elapsed = 0
+				while BRVS_PetCollectEnabled and elapsed < t do
+					task.wait(0.1); elapsed = elapsed + 0.1
+				end
+			end
+		end)
+	end,
+})
+
+-- Big Pet (placeholder)
 BRVS_CollectTab:CreateSection("Auto Collect Big Pet")
 local BRVS_BigPetDelaySlider = BRVS_CollectTab:CreateSlider({
 	Name = "Big Pet Delay",
@@ -711,17 +734,140 @@ local BRVS_BigPetToggle = BRVS_CollectTab:CreateToggle({
 		if not BRVS_BigPetCollectEnabled then return end
 		BRVS_BigPetCollectThread = task.spawn(function()
 			while BRVS_BigPetCollectEnabled do
-				-- TODO: Replace with your actual remote/action for big pet collect
 				local t = math.max(0.1, BRVS_BigPetDelaySlider.CurrentValue or BRVS_BigPetCollectInterval or 5)
 				local elapsed = 0
 				while BRVS_BigPetCollectEnabled and elapsed < t do
-					task.wait(0.1)
-					elapsed = elapsed + 0.1
+					task.wait(0.1); elapsed = elapsed + 0.1
 				end
 			end
 		end)
 	end,
 })
+
+-- =================== TAB: Inventory (Paragraph-based) ===================
+local BRVS_InvTab = BRVS_Window:CreateTab("Inventory", "box")
+
+-- Paragraph element for Eggs
+local BRVS_InvEggPara = BRVS_InvTab:CreateParagraph({
+    Title = "Eggs",
+    Content = "loading..."
+})
+
+-- Connections we manage for live updates
+local BRVS_InvEggConns, BRVS_InvEggPerItemConns = {}, {}
+
+local function BRVS_ClearInvEggConns()
+    for _, c in ipairs(BRVS_InvEggConns) do pcall(function() c:Disconnect() end) end
+    BRVS_InvEggConns = {}
+    for inst, list in pairs(BRVS_InvEggPerItemConns) do
+        for _, c in ipairs(list) do pcall(function() c:Disconnect() end) end
+        BRVS_InvEggPerItemConns[inst] = nil
+    end
+end
+
+local function BRVS_HumanEggName(tVal)
+    local base = tostring(tVal or "Unknown")
+    base = base:gsub("Egg$", "")
+    if #base > 0 then
+        base = base:sub(1,1):upper() .. base:sub(2):lower()
+    end
+    return base .. " egg"
+end
+
+local function BRVS_RebuildEggInventoryText(eggsFolder)
+    if not BRVS_InvEggPara then return end
+    if not eggsFolder then
+        BRVS_InvEggPara:Set({ Title = "Eggs", Content = "(none)" })
+        return
+    end
+
+    -- Tally by (T, M)
+    local counts = {}  -- key: T .. "\0" .. (M or "")
+    for _, egg in ipairs(eggsFolder:GetChildren()) do
+        local T = egg:GetAttribute("T")
+        local M = egg:GetAttribute("M")
+        local key = tostring(T or "Unknown") .. "\0" .. tostring(M or "")
+        counts[key] = (counts[key] or 0) + 1
+    end
+
+    -- Build pretty bullet lines
+    local lines = {}
+    for key, n in pairs(counts) do
+        local T, M = key:match("^(.-)\0(.*)$")
+        local name = BRVS_HumanEggName(T)
+        local line
+        if M and M ~= "" then
+            line = string.format("• %s | %s  ×%d", name, M, n)
+        else
+            line = string.format("• %s  ×%d", name, n)
+        end
+        table.insert(lines, line)
+    end
+    table.sort(lines, function(a,b) return a:lower() < b:lower() end)
+
+    local content = ""
+    if #lines == 0 then
+        content = "(none)"
+    else
+        -- join with newlines
+        for i, ln in ipairs(lines) do
+            if i == 1 then
+                content = ln
+            else
+                content = content .. "\n" .. ln
+            end
+        end
+    end
+
+    BRVS_InvEggPara:Set({ Title = "Eggs", Content = content })
+end
+
+local function BRVS_BindInventoryEggs()
+    BRVS_ClearInvEggConns()
+
+    local pg   = BRVS_Player:WaitForChild("PlayerGui")
+    local data = pg:WaitForChild("Data")
+    local eggs = data:WaitForChild("Egg") -- array of uid instances with attributes T, optional M
+
+    BRVS_RebuildEggInventoryText(eggs)
+
+    -- React to adds/removes
+    table.insert(BRVS_InvEggConns, eggs.ChildAdded:Connect(function(child)
+        local list = {}
+        table.insert(list, child:GetAttributeChangedSignal("T"):Connect(function()
+            BRVS_RebuildEggInventoryText(eggs)
+        end))
+        table.insert(list, child:GetAttributeChangedSignal("M"):Connect(function()
+            BRVS_RebuildEggInventoryText(eggs)
+        end))
+        BRVS_InvEggPerItemConns[child] = list
+        BRVS_RebuildEggInventoryText(eggs)
+    end))
+
+    table.insert(BRVS_InvEggConns, eggs.ChildRemoved:Connect(function(child)
+        local list = BRVS_InvEggPerItemConns[child]
+        if list then
+            for _, c in ipairs(list) do pcall(function() c:Disconnect() end) end
+        end
+        BRVS_InvEggPerItemConns[child] = nil
+        BRVS_RebuildEggInventoryText(eggs)
+    end))
+
+    -- Hook existing items for attribute changes
+    for _, child in ipairs(eggs:GetChildren()) do
+        local list = {}
+        table.insert(list, child:GetAttributeChangedSignal("T"):Connect(function()
+            BRVS_RebuildEggInventoryText(eggs)
+        end))
+        table.insert(list, child:GetAttributeChangedSignal("M"):Connect(function()
+            BRVS_RebuildEggInventoryText(eggs)
+        end))
+        BRVS_InvEggPerItemConns[child] = list
+    end
+end
+
+-- call once on init (after window creation)
+-- BRVS_BindInventoryEggs()
 
 -- =================== TAB: Utils ===================
 local BRVS_UtilsTab = BRVS_Window:CreateTab("Utils", "sliders")
@@ -751,20 +897,17 @@ local BRVS_AntiAfkToggle = BRVS_UtilsTab:CreateToggle({
 		BRVS_AntiAfkThread = nil
 		if not BRVS_AntiAfkEnabled then return end
 
-		-- Jump when Roblox reports idling
 		BRVS_AntiAfkConn = BRVS_Players.LocalPlayer.Idled:Connect(function()
 			BRVS_PerformJump(1)
 		end)
 
-		-- Periodic keepalive (jump every ~45s)
 		BRVS_AntiAfkThread = task.spawn(function()
 			while BRVS_AntiAfkEnabled do
 				BRVS_PerformJump(1)
 				local t = 45
 				local elapsed = 0
 				while BRVS_AntiAfkEnabled and elapsed < t do
-					task.wait(0.25)
-					elapsed = elapsed + 0.25
+					task.wait(0.25); elapsed = elapsed + 0.25
 				end
 			end
 		end)
@@ -772,12 +915,15 @@ local BRVS_AntiAfkToggle = BRVS_UtilsTab:CreateToggle({
 })
 
 --========================================================
--- Bind island & load config
+-- Bind island, LIVE stock, inventory, load config
 if BRVS_IslandName then
 	BRVS_BindIsland(BRVS_IslandName)
 else
 	BRVS_Rayfield:Notify({ Title = "Egg Tools", Content = "You are not occupying Island_1..Island_6", Duration = 6, Image = "alert-triangle" })
 end
+
+BRVS_BindFoodStock()
+BRVS_BindInventoryEggs()
 
 -- Load saved UI state
 BRVS_Rayfield:LoadConfiguration()
@@ -785,12 +931,9 @@ BRVS_Rayfield:LoadConfiguration()
 -- Sync state from saved flags (prefixed)
 do
 	-- Dropdowns
-	if BRVS_EggDD and BRVS_EggDD.CurrentOption then BRVS_SelEggNames = BRVS_AsArray(BRVS_EggDD.CurrentOption) end
-	if BRVS_MutDD and BRVS_MutDD.CurrentOption then BRVS_SelMutations = BRVS_AsArray(BRVS_MutDD.CurrentOption) end
-	if BRVS_FoodDD and BRVS_FoodDD.CurrentOption then
-		BRVS_SelectedFood = BRVS_AsArray(BRVS_FoodDD.CurrentOption)
-		_G.__brvs_selected_food = BRVS_SelectedFood
-	end
+	if BRVS_EggDD and BRVS_EggDD.CurrentOption then BRVS_SelEggNames = BRVS_EggDD.CurrentOption or {} end
+	if BRVS_MutDD and BRVS_MutDD.CurrentOption then BRVS_SelMutations = BRVS_MutDD.CurrentOption or {} end
+	if BRVS_FoodDD and BRVS_FoodDD.CurrentOption then BRVS_SelectedFood = BRVS_FoodDD.CurrentOption or {} end
 
 	-- Auto Buy Eggs
 	if BRVS_AutoBuyToggle and BRVS_AutoBuyToggle.CurrentValue then
@@ -798,45 +941,43 @@ do
 		BRVS_RescanAutoBuy()
 	end
 
-	-- Auto Buy Food
-	if BRVS_FoodIntervalSlider and BRVS_FoodIntervalSlider.CurrentValue then
-		BRVS_FoodBuyInterval = BRVS_FoodIntervalSlider.CurrentValue
-	end
+	-- Auto Buy Food (fixed tick)
 	if BRVS_AutoBuyFoodToggle and BRVS_AutoBuyFoodToggle.CurrentValue and not BRVS_FoodBuyThread then
 		BRVS_FoodBuyEnabled = true
 		BRVS_FoodBuyThread = task.spawn(function()
 			while BRVS_FoodBuyEnabled do
-				-- >>> Build the list using Any/empty = all (restore path too)
-				local selected = BRVS_AsArray(BRVS_SelectedFood)
-				local buyAll = (#selected == 0)
-				for _, s in ipairs(selected) do if s == "Any" then buyAll = true break end end
-				local foods = buyAll and BRVS_FOOD_BASE or selected
-
-				local remote = BRVS_ReplicatedStorage:FindFirstChild(BRVS_FOOD_REMOTE_PATH[1])
-				remote = remote and remote:FindFirstChild(BRVS_FOOD_REMOTE_PATH[2])
+				local foods = (BRVS_SelectedFood and #BRVS_SelectedFood > 0) and BRVS_SelectedFood or {}
+				local remote = BRVS_GetRemote(BRVS_FOOD_REMOTE_PATH)
 				if #foods > 0 and remote and remote:IsA("RemoteEvent") then
 					for _, item in ipairs(foods) do
 						if not BRVS_FoodBuyEnabled then break end
-						remote:FireServer(item)
-						task.wait(0.05)
+						if BRVS_HasFoodStock(item) then
+							remote:FireServer(item)
+							task.wait(0.05)
+						end
 					end
 				end
-				local t = math.max(0.1, BRVS_FoodIntervalSlider.CurrentValue or BRVS_FoodBuyInterval or 2)
-				local elapsed = 0
-				while BRVS_FoodBuyEnabled and elapsed < t do
-					task.wait(0.1)
-					elapsed = elapsed + 0.1
-				end
+				task.wait(BRVS_FoodBuyInterval)
 			end
 		end)
 	end
 
-	-- Auto Claim Pet (restore)
+	-- Auto Collect Pet
 	if BRVS_PetDelaySlider and BRVS_PetDelaySlider.CurrentValue then
-		BRVS_PetClaimInterval = BRVS_PetDelaySlider.CurrentValue
+		BRVS_PetCollectInterval = BRVS_PetDelaySlider.CurrentValue
 	end
-	if BRVS_PetToggle and BRVS_PetToggle.CurrentValue and not BRVS_PetClaimThread then
-		BRVS_Pet_Start()
+	if BRVS_PetToggle and BRVS_PetToggle.CurrentValue and not BRVS_PetCollectThread then
+		BRVS_PetCollectEnabled = true
+		BRVS_PetCollectThread = task.spawn(function()
+			while BRVS_PetCollectEnabled do
+				BRVS_ClaimMyPetsOnce()
+				local t = math.max(0.1, BRVS_PetDelaySlider.CurrentValue or BRVS_PetCollectInterval or 3)
+				local elapsed = 0
+				while BRVS_PetCollectEnabled and elapsed < t do
+					task.wait(0.1); elapsed = elapsed + 0.1
+				end
+			end
+		end)
 	end
 
 	-- Auto Collect Big Pet
@@ -847,21 +988,17 @@ do
 		BRVS_BigPetCollectEnabled = true
 		BRVS_BigPetCollectThread = task.spawn(function()
 			while BRVS_BigPetCollectEnabled do
-				-- TODO: big pet collect remote
 				local t = math.max(0.1, BRVS_BigPetDelaySlider.CurrentValue or BRVS_BigPetCollectInterval or 5)
 				local elapsed = 0
 				while BRVS_BigPetCollectEnabled and elapsed < t do
-					task.wait(0.1)
-					elapsed = elapsed + 0.1
+					task.wait(0.1); elapsed = elapsed + 0.1
 				end
 			end
 		end)
 	end
 
 	-- Ultra Low restore
-	if BRVS_UltraLowToggle and BRVS_UltraLowToggle.CurrentValue then
-		BRVS_ApplyUltraLow()
-	end
+	-- (If you saved the toggle ON last session, consider applying here if needed.)
 
 	-- Anti AFK restore
 	if BRVS_AntiAfkToggle and BRVS_AntiAfkToggle.CurrentValue then
@@ -877,8 +1014,7 @@ do
 					local t = 45
 					local elapsed = 0
 					while BRVS_AntiAfkEnabled and elapsed < t do
-						task.wait(0.25)
-						elapsed = elapsed + 0.25
+						task.wait(0.25); elapsed = elapsed + 0.25
 					end
 				end
 			end)
