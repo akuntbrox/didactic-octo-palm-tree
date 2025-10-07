@@ -1066,8 +1066,8 @@ local BRVS_LastMarkerKey = nil
 local BRVS_FishThread
 
 -- === config ===
-local BRVS_FishBait = "FishingBait1"       -- default bait
-local BRVS_CastForward = 15                -- studs forward
+local BRVS_FishBait = "FishingBait3"       -- default bait
+local BRVS_CastForward = 3                 -- studs forward
 local BRVS_WaterHeight = 11                -- Y height of water plane
 local BRVS_TeleportYOffset = 5             -- lift after teleport
 local BRVS_PollInterval = 0.5              -- check interval
@@ -1268,7 +1268,7 @@ BRVS_FishTab:CreateDropdown({
         "Fly Bait (10m) | FishingBait2",
         "Fish Bait (800m) | FishingBait3"
     },
-    CurrentOption = "Cheese Bait ($300) | FishingBait1",
+    CurrentOption = "Fish Bait (800m) | FishingBait3",
     Flag = "FishBait",
     Callback = function(option)
     local selected = option
