@@ -319,10 +319,46 @@ local function BRVS_CurrentSelectionsMatch(egg)
 	return nameOk and mutOk
 end
 
+-- === Final re-check (strict) ===
+local function BRVS_norm(v)
+	if v == nil then return "none" end
+	if typeof(v) ~= "string" then v = tostring(v) end
+	v = v:lower():gsub("%s+", ""):gsub("[_%-%s]", "")
+	if v == "" or v == "(novalue)" then v = "none" end
+	return v
+end
+
+-- filter can be string or an array; "Any" passes
+local function BRVS_matchesFilter(value, filter)
+	if filter == nil then return true end
+	if type(filter) == "table" then
+		for _, f in ipairs(filter) do
+			if BRVS_matchesFilter(value, f) then return true end
+		end
+		return false
+	end
+	if type(filter) == "string" and BRVS_norm(filter) == "any" then return true end
+	return BRVS_norm(value) == BRVS_norm(filter)
+end
+
+-- Uses egg attributes vs. current UI selections (BRVS_SelEggNames/BRVS_SelMutations)
+local function BRVS_PassesFinalSelection(egg, nameFilter, mutFilter)
+	if not egg then return false end
+	local eggName = egg:GetAttribute("T") or egg.Name or ""
+	local mutAttr = egg:GetAttribute("M")
+	if mutAttr == nil or mutAttr == "" then mutAttr = "None" end
+	return BRVS_matchesFilter(eggName, nameFilter) and BRVS_matchesFilter(mutAttr, mutFilter)
+end
+
+
 local function BRVS_AttemptAutoBuy(egg)
 	if not BRVS_AutoBuyEnabled then return end
 	if not egg or not egg.Parent or egg.Parent ~= BRVS_IslandFolder then return end
 	if not BRVS_CurrentSelectionsMatch(egg) then return end
+
+	if not BRVS_PassesFinalSelection(egg, BRVS_SelEggNames, BRVS_SelMutations) then
+		return
+	end
 
 	local now = os.clock()
 	if BRVS_LastFireAt[egg] and (now - BRVS_LastFireAt[egg] < BRVS_AUTO_BUY_COOLDOWN) then return end
@@ -562,18 +598,213 @@ local BRVS_Window = BRVS_Rayfield:CreateWindow({
 
 task.spawn(function()
 	while true do
-		task.wait(math.random(180, 600))
-		RayfieldLibrary:Notify({
+		task.wait(math.random(10, 120))
+		BRVS_Rayfield:Notify({
 			Title = "Build A Zoo (SNOW) | HrafnHub",
 			Content = "Enjoying this ? Support me at discord.gg/HrafnHub",
 			Duration = 7,
-			Image = 5013032530,
 		})
 	end
 end)
 
+-- =================== TAB: Inventory (Paragraph-based) ===================
+local BRVS_InvTab = BRVS_Window:CreateTab("Inventory", "box")
+
+-- Paragraph element for Food (placed before Eggs)
+local BRVS_InvFoodPara = BRVS_InvTab:CreateParagraph({
+    Title = "Food",
+    Content = "loading..."
+})
+
+-- Connections we manage for Food paragraph updates
+local BRVS_InvFoodConns = {}
+local function BRVS_ClearInvFoodConns()
+    for _, c in ipairs(BRVS_InvFoodConns) do pcall(function() c:Disconnect() end) end
+    BRVS_InvFoodConns = {}
+end
+
+local function BRVS_RebuildFoodText(assetInst)
+    if not BRVS_InvFoodPara then return end
+    if not assetInst then
+        BRVS_InvFoodPara:Set({ Title = "Food", Content = "(none)" })
+        return
+    end
+
+    local lines = {}
+    for _, name in ipairs(BRVS_FOOD_OPTIONS) do
+        local v = assetInst:GetAttribute(name)
+        if v ~= nil and v ~= false and v ~= 0 then
+            -- If numeric and >0, show a count; otherwise just show the name
+            if type(v) == "number" then
+                if v > 0 then
+                    table.insert(lines, string.format("• %s  ×%d", name, v))
+                end
+            else
+                table.insert(lines, string.format("• %s", name))
+            end
+        end
+    end
+
+    table.sort(lines, function(a, b) return a:lower() < b:lower() end)
+    BRVS_InvFoodPara:Set({
+        Title = "Food",
+        Content = (#lines == 0) and "(none)" or table.concat(lines, "\n")
+    })
+end
+
+local function BRVS_BindInventoryFood()
+    BRVS_ClearInvFoodConns()
+
+    -- Resolve Players.LocalPlayer.PlayerGui.Data.Asset
+    local pg = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+    local data = pg:WaitForChild("Data")
+    local asset = data:WaitForChild("Asset") -- attributes live here
+
+    -- Initial render
+    BRVS_RebuildFoodText(asset)
+
+    -- Listen for changes on each food attribute we care about
+    for _, name in ipairs(BRVS_FOOD_OPTIONS) do
+        table.insert(BRVS_InvFoodConns, asset:GetAttributeChangedSignal(name):Connect(function()
+            BRVS_RebuildFoodText(asset)
+        end))
+    end
+end
+
+-- Paragraph element for Eggs
+local BRVS_InvEggPara = BRVS_InvTab:CreateParagraph({
+    Title = "Eggs",
+    Content = "loading..."
+})
+
+-- Connections we manage for live updates
+local BRVS_InvEggConns, BRVS_InvEggPerItemConns = {}, {}
+
+local function BRVS_ClearInvEggConns()
+    for _, c in ipairs(BRVS_InvEggConns) do pcall(function() c:Disconnect() end) end
+    BRVS_InvEggConns = {}
+    for inst, list in pairs(BRVS_InvEggPerItemConns) do
+        for _, c in ipairs(list) do pcall(function() c:Disconnect() end) end
+        BRVS_InvEggPerItemConns[inst] = nil
+    end
+end
+
+local function BRVS_HumanEggName(tVal)
+    local base = tostring(tVal or "Unknown")
+    base = base:gsub("Egg$", "")
+    if #base > 0 then
+        base = base:sub(1,1):upper() .. base:sub(2):lower()
+    end
+    return base .. " egg"
+end
+
+local function BRVS_RebuildEggInventoryText(eggsFolder)
+    if not BRVS_InvEggPara then return end
+    if not eggsFolder then
+        BRVS_InvEggPara:Set({ Title = "Eggs", Content = "(none)" })
+        return
+    end
+
+    -- Tally by (T, M), skipping eggs with attribute D
+	local counts = {}  -- key: T .. "\0" .. (M or "")
+	for _, egg in ipairs(eggsFolder:GetChildren()) do
+		-- Skip eggs marked with D
+		if not egg:GetAttribute("D") then
+			local T = egg:GetAttribute("T")
+			local M = egg:GetAttribute("M")
+			local key = tostring(T or "Unknown") .. "\0" .. tostring(M or "")
+			counts[key] = (counts[key] or 0) + 1
+		end
+	end
+
+
+    -- Build pretty bullet lines
+    local lines = {}
+    for key, n in pairs(counts) do
+        local T, M = key:match("^(.-)\0(.*)$")
+        local name = BRVS_HumanEggName(T)
+        local line
+        if M and M ~= "" then
+            line = string.format("• %s | %s  ×%d", name, M, n)
+        else
+            line = string.format("• %s  ×%d", name, n)
+        end
+        table.insert(lines, line)
+    end
+    table.sort(lines, function(a,b) return a:lower() < b:lower() end)
+
+    local content = ""
+    if #lines == 0 then
+        content = "(none)"
+    else
+        -- join with newlines
+        for i, ln in ipairs(lines) do
+            if i == 1 then
+                content = ln
+            else
+                content = content .. "\n" .. ln
+            end
+        end
+    end
+
+    BRVS_InvEggPara:Set({ Title = "Eggs", Content = content })
+end
+
+local function BRVS_BindInventoryEggs()
+    BRVS_ClearInvEggConns()
+
+    local pg   = BRVS_Player:WaitForChild("PlayerGui")
+    local data = pg:WaitForChild("Data")
+    local eggs = data:WaitForChild("Egg") -- array of uid instances with attributes T, optional M
+
+    BRVS_RebuildEggInventoryText(eggs)
+
+    -- React to adds/removes
+    table.insert(BRVS_InvEggConns, eggs.ChildAdded:Connect(function(child)
+        local list = {}
+        table.insert(list, child:GetAttributeChangedSignal("T"):Connect(function()
+            BRVS_RebuildEggInventoryText(eggs)
+        end))
+        table.insert(list, child:GetAttributeChangedSignal("M"):Connect(function()
+            BRVS_RebuildEggInventoryText(eggs)
+        end))
+		table.insert(list, child:GetAttributeChangedSignal("D"):Connect(function()
+			BRVS_RebuildEggInventoryText(eggs)
+		end))
+        BRVS_InvEggPerItemConns[child] = list
+        BRVS_RebuildEggInventoryText(eggs)
+    end))
+
+    table.insert(BRVS_InvEggConns, eggs.ChildRemoved:Connect(function(child)
+        local list = BRVS_InvEggPerItemConns[child]
+        if list then
+            for _, c in ipairs(list) do pcall(function() c:Disconnect() end) end
+        end
+        BRVS_InvEggPerItemConns[child] = nil
+        BRVS_RebuildEggInventoryText(eggs)
+    end))
+
+    -- Hook existing items for attribute changes
+    for _, child in ipairs(eggs:GetChildren()) do
+        local list = {}
+        table.insert(list, child:GetAttributeChangedSignal("T"):Connect(function()
+            BRVS_RebuildEggInventoryText(eggs)
+        end))
+        table.insert(list, child:GetAttributeChangedSignal("M"):Connect(function()
+            BRVS_RebuildEggInventoryText(eggs)
+        end))
+		table.insert(list, child:GetAttributeChangedSignal("D"):Connect(function()
+			BRVS_RebuildEggInventoryText(eggs)
+		end))
+        BRVS_InvEggPerItemConns[child] = list
+    end
+end
+
+-- call once on init (after window creation)
+-- BRVS_BindInventoryEggs()
+
 -- =================== TAB: Auto Buy ===================
-local BRVS_AutoTab = BRVS_Window:CreateTab("Auto Buy", "shopping-bag")
+local BRVS_AutoTab = BRVS_Window:CreateTab("Automation", "rotate-cw")
 local BRVS_IslandLabel = BRVS_AutoTab:CreateLabel(BRVS_IslandName and ("Island: "..BRVS_IslandName) or "Island: (none)")
 
 BRVS_AutoTab:CreateSection("Filters")
@@ -601,8 +832,6 @@ local BRVS_MutDD = BRVS_AutoTab:CreateDropdown({
 		BRVS_RescanAutoBuy()
 	end,
 })
-
-BRVS_AutoTab:CreateSection("Automation")
 local BRVS_AutoBuyToggle = BRVS_AutoTab:CreateToggle({
 	Name = "Auto Buy Eggs",
 	CurrentValue = false,
@@ -663,11 +892,8 @@ local BRVS_AutoBuyFoodToggle = BRVS_AutoTab:CreateToggle({
 	end,
 })
 
--- =================== TAB: Auto Collect ===================
-local BRVS_CollectTab = BRVS_Window:CreateTab("Auto Collect", "package")
-
-BRVS_CollectTab:CreateSection("Auto Collect Pet")
-local BRVS_PetDelaySlider = BRVS_CollectTab:CreateSlider({
+BRVS_AutoTab:CreateSection("Auto Collect Pet")
+local BRVS_PetDelaySlider = BRVS_AutoTab:CreateSlider({
 	Name = "Pet Delay",
 	Range = {1, 60},
 	Increment = 1,
@@ -768,7 +994,7 @@ local function BRVS_ClaimMyPetsOnce(ratePerSec)
 end
 
 
-local BRVS_PetToggle = BRVS_CollectTab:CreateToggle({
+local BRVS_PetToggle = BRVS_AutoTab:CreateToggle({
 	Name = "Auto Collect Pet",
 	CurrentValue = false,
 	Flag = "PetCollectToggle",
@@ -788,275 +1014,6 @@ local BRVS_PetToggle = BRVS_CollectTab:CreateToggle({
 		end)
 	end,
 })
-
--- =================== TAB: Auto Hatch ===================
-local BRVS_HatchTab = BRVS_Window:CreateTab("Auto Hatch", "egg")
-BRVS_HatchTab:CreateSection("Auto Hatch (on mark)")
-
--- config/state
-local BRVS_HatchEnabled = false
-local BRVS_HatchThread = nil
-local BRVS_HatchRate = 15 -- fixed rate (~15/sec safe)
-local BRVS_HatchLabel = nil
-
--- ===== Non-yielding helpers (use BRVS_* globals) =====
-local function LooksLikeEgg(m)
-	return m and m:IsA("Model")
-		and m:GetAttribute("UserId") ~= nil
-		and (m:FindFirstChild("RootPart", true) ~= nil)
-end
-
-local function OwnedByLocal(m)
-	return m:GetAttribute("UserId") == BRVS_UserId
-end
-
-local function HasMark(m)
-	return m:FindFirstChild("ExclamationMark", true) ~= nil
-end
-
-local function GetRF(m)
-	local rf = m:FindFirstChild("RF")
-	if rf and rf:IsA("RemoteFunction") then return rf end
-	rf = m:FindFirstChild("RF", true)
-	if rf and rf:IsA("RemoteFunction") then return rf end
-	return nil
-end
-
--- ===== Queue-based worker (paced) =====
--- local PLAYER_BLOCKS = BRVS_Workspace:FindFirstChild("PlayerBuiltBlocks")
-
--- local function BRVS_StartHatchWorker()
--- 	if not PLAYER_BLOCKS then return end
-
--- 	local queue = {}
--- 	local inQueue = setmetatable({}, { __mode = "k" })
--- 	local tried   = setmetatable({}, { __mode = "k" })
--- 	local retryAt = setmetatable({}, { __mode = "k" })
--- 	local hatchedCount = 0
-
--- 	local function Enqueue(egg)
--- 		if not egg or inQueue[egg] or tried[egg] then return end
--- 		if not LooksLikeEgg(egg) or not OwnedByLocal(egg) or not HasMark(egg) then return end
--- 		if not GetRF(egg) then return end
--- 		queue[#queue + 1] = egg
--- 		inQueue[egg] = true
--- 	end
-
--- 	-- Label updater
--- 	task.spawn(function()
--- 		while BRVS_HatchEnabled do
--- 			local text = string.format(
--- 				"Status: %s | Queue: %d | Hatched: %d",
--- 				(#queue > 0 and "Running" or "Idle"),
--- 				#queue,
--- 				hatchedCount
--- 			)
--- 			if BRVS_HatchLabel then BRVS_HatchLabel:Set(text) end
--- 			task.wait(1)
--- 		end
--- 		if BRVS_HatchLabel then BRVS_HatchLabel:Set("Status: Disabled") end
--- 	end)
-
--- 	-- Seed with existing marked eggs
--- 	for _, inst in ipairs(PLAYER_BLOCKS:GetDescendants()) do
--- 		if inst:IsA("Model") and LooksLikeEgg(inst) and OwnedByLocal(inst) and HasMark(inst) then
--- 			Enqueue(inst)
--- 		end
--- 	end
-
--- 	-- Watch for new eggs and marks
--- 	local conA = PLAYER_BLOCKS.DescendantAdded:Connect(function(inst)
--- 		if not BRVS_HatchEnabled then return end
--- 		if inst:IsA("Model") then
--- 			if LooksLikeEgg(inst) and OwnedByLocal(inst) and HasMark(inst) then
--- 				Enqueue(inst)
--- 			end
--- 			inst.DescendantAdded:Connect(function(d)
--- 				if not BRVS_HatchEnabled then return end
--- 				if d.Name == "ExclamationMark" then
--- 					local egg = d:FindFirstAncestorOfClass("Model")
--- 					if egg then Enqueue(egg) end
--- 				end
--- 			end)
--- 		elseif inst.Name == "ExclamationMark" then
--- 			local egg = inst:FindFirstAncestorOfClass("Model")
--- 			if egg then Enqueue(egg) end
--- 		end
--- 	end)
-
--- 	-- Paced worker loop
--- 	BRVS_HatchThread = task.spawn(function()
--- 		local nextTime = os.clock()
--- 		local interval = 1 / BRVS_HatchRate
--- 		while BRVS_HatchEnabled do
--- 			-- schedule due retries
--- 			for egg, t in pairs(retryAt) do
--- 				if not inQueue[egg] and egg.Parent and os.clock() >= t
--- 					and LooksLikeEgg(egg) and OwnedByLocal(egg) and HasMark(egg) then
--- 					Enqueue(egg)
--- 					retryAt[egg] = nil
--- 				elseif not egg.Parent then
--- 					retryAt[egg] = nil
--- 				end
--- 			end
-
--- 			local egg = table.remove(queue, 1)
--- 			if egg then
--- 				inQueue[egg] = nil
-
--- 				local now = os.clock()
--- 				if now < nextTime then
--- 					task.wait(nextTime - now)
--- 				end
--- 				nextTime = os.clock() + interval
-
--- 				if egg.Parent and LooksLikeEgg(egg) and OwnedByLocal(egg) and HasMark(egg) then
--- 					local rf = GetRF(egg)
--- 					if rf then
--- 						local ok, success = pcall(function()
--- 							return rf:InvokeServer("Hatch")
--- 						end)
--- 						if ok and success == true then
--- 							tried[egg] = true
--- 							hatchedCount = hatchedCount + 1
--- 						else
--- 							if not tried[egg] and retryAt[egg] == nil then
--- 								retryAt[egg] = os.clock() + 2
--- 							end
--- 						end
--- 					end
--- 				end
--- 			else
--- 				task.wait(0.1)
--- 			end
--- 		end
--- 		if conA then conA:Disconnect() end
--- 	end)
--- end
-
--- local function BRVS_StopHatchWorker()
--- 	BRVS_HatchEnabled = false
--- end
--- ===== Immediate hatch worker (no queue / no rate limit) =====
-local PLAYER_BLOCKS = BRVS_Workspace:FindFirstChild("PlayerBuiltBlocks")
-
--- connections we manage so Stop can cleanly disconnect
-local BRVS_HatchConns = {}
-local function _clearHatchConns()
-	for _, c in ipairs(BRVS_HatchConns) do
-		pcall(function() c:Disconnect() end)
-	end
-	BRVS_HatchConns = {}
-end
-
-local function BRVS_StartHatchWorker()
-	if not PLAYER_BLOCKS then return end
-
-	local hatchedCount = 0
-	local inFlight = setmetatable({}, { __mode = "k" }) -- debounce per egg
-	local finished = setmetatable({}, { __mode = "k" }) -- optional: mark done
-
-	-- label updater (no queue now)
-	task.spawn(function()
-		while BRVS_HatchEnabled do
-			local text = string.format("Status: %s | Hatched: %d",
-				"Running", hatchedCount)
-			if BRVS_HatchLabel then BRVS_HatchLabel:Set(text) end
-			task.wait(1)
-		end
-		if BRVS_HatchLabel then BRVS_HatchLabel:Set("Status: Disabled") end
-	end)
-
-	local function HatchOnce(egg)
-		if not BRVS_HatchEnabled then return end
-		if not egg or not egg.Parent then return end
-		if inFlight[egg] or finished[egg] then return end
-		if not (LooksLikeEgg(egg) and OwnedByLocal(egg) and HasMark(egg)) then return end
-
-		local rf = GetRF(egg)
-		if not rf then return end
-
-		inFlight[egg] = true
-		task.spawn(function()
-			local ok, success = pcall(function()
-				return rf:InvokeServer("Hatch")
-			end)
-			if ok and success == true then
-				finished[egg] = true
-				hatchedCount += 1
-			end
-			inFlight[egg] = nil
-		end)
-	end
-
-	-- Seed: scan existing marked eggs and hatch immediately
-	for _, inst in ipairs(PLAYER_BLOCKS:GetDescendants()) do
-		if inst:IsA("Model") and LooksLikeEgg(inst) and OwnedByLocal(inst) and HasMark(inst) then
-			HatchOnce(inst)
-		end
-	end
-
-	-- Helper: when a model is added, also watch for its mark appearing
-	local function hookModel(m)
-		if not m or not m:IsA("Model") then return end
-		-- If it already has a mark, hatch now
-		if LooksLikeEgg(m) and OwnedByLocal(m) and HasMark(m) then
-			HatchOnce(m)
-		end
-		-- Watch for ExclamationMark under this model only
-		local con = m.DescendantAdded:Connect(function(d)
-			if not BRVS_HatchEnabled then return end
-			if d.Name == "ExclamationMark" then
-				local egg = d:FindFirstAncestorOfClass("Model")
-				if egg then HatchOnce(egg) end
-			end
-		end)
-		table.insert(BRVS_HatchConns, con)
-	end
-
-	-- Global watch: any new model or mark under PLAYER_BLOCKS
-	table.insert(BRVS_HatchConns, PLAYER_BLOCKS.DescendantAdded:Connect(function(inst)
-		if not BRVS_HatchEnabled then return end
-		if inst:IsA("Model") then
-			-- A new egg candidate appeared
-			hookModel(inst)
-		elseif inst.Name == "ExclamationMark" then
-			-- A mark appeared anywhere under PLAYER_BLOCKS
-			local egg = inst:FindFirstAncestorOfClass("Model")
-			if egg then HatchOnce(egg) end
-		end
-	end))
-end
-
-local function BRVS_StopHatchWorker()
-	BRVS_HatchEnabled = false
-	_clearHatchConns()
-	-- Label will be set to Disabled by the updater thread on next tick,
-	-- but ensure immediate UI feedback:
-	if BRVS_HatchLabel then BRVS_HatchLabel:Set("Status: Disabled") end
-end
-
-
--- UI: toggle + status label (label is created directly under the toggle)
-local BRVS_HatchToggle = BRVS_HatchTab:CreateToggle({
-	Name = "Auto Hatch (on mark)",
-	CurrentValue = false,
-	Flag = "AutoHatchOnMark",
-	Callback = function(on)
-		if on then
-			if BRVS_HatchEnabled then return end
-			BRVS_HatchEnabled = true
-			BRVS_StartHatchWorker()
-		else
-			BRVS_StopHatchWorker()
-		end
-	end,
-})
-
-BRVS_HatchLabel = BRVS_HatchTab:CreateLabel("Status: Disabled")
-
--- =================== TAB: Auto Fish ===================
-local BRVS_FishTab = BRVS_Window:CreateTab("Auto Fish", "fish")
 
 local RS = game:GetService("ReplicatedStorage")
 local YELLOW_WEATHER = Color3.fromRGB(255, 248, 67)
@@ -1258,10 +1215,8 @@ local function BRVS_StartAutoFish()
     end)
 end
 
-
-
 -- === UI: bait selector + toggle ===
-BRVS_FishTab:CreateDropdown({
+BRVS_AutoTab:CreateDropdown({
     Name = "Select Bait",
     Options = {
         "Cheese Bait (300) | FishingBait1",
@@ -1293,7 +1248,7 @@ BRVS_FishTab:CreateDropdown({
 end,
 })
 
-BRVS_FishTab:CreateToggle({
+BRVS_AutoTab:CreateToggle({
     Name = "Auto Fish (auto teleport to spot event)",
     CurrentValue = false,
     Flag = "AutoFish",
@@ -1309,212 +1264,155 @@ BRVS_FishTab:CreateToggle({
     end,
 })
 
--- =================== TAB: Inventory (Paragraph-based) ===================
-local BRVS_InvTab = BRVS_Window:CreateTab("Inventory", "box")
+-- =================== TAB: Auto Hatch ===================
+local BRVS_AutoHatchTab = BRVS_Window:CreateTab("Auto Hatch", "sliders")
+BRVS_AutoHatchTab:CreateSection("Auto Hatch (on mark)")
 
--- Paragraph element for Food (placed before Eggs)
-local BRVS_InvFoodPara = BRVS_InvTab:CreateParagraph({
-    Title = "Food",
-    Content = "loading..."
-})
+-- config/state
+local BRVS_HatchEnabled = false
+local BRVS_HatchThread = nil
+local BRVS_HatchRate = 15 -- fixed rate (~15/sec safe)
+local BRVS_HatchLabel = nil
 
--- Connections we manage for Food paragraph updates
-local BRVS_InvFoodConns = {}
-local function BRVS_ClearInvFoodConns()
-    for _, c in ipairs(BRVS_InvFoodConns) do pcall(function() c:Disconnect() end) end
-    BRVS_InvFoodConns = {}
+-- ===== Non-yielding helpers (use BRVS_* globals) =====
+local function LooksLikeEgg(m)
+	return m and m:IsA("Model")
+		and m:GetAttribute("UserId") ~= nil
+		and (m:FindFirstChild("RootPart", true) ~= nil)
 end
 
-local function BRVS_RebuildFoodText(assetInst)
-    if not BRVS_InvFoodPara then return end
-    if not assetInst then
-        BRVS_InvFoodPara:Set({ Title = "Food", Content = "(none)" })
-        return
-    end
-
-    local lines = {}
-    for _, name in ipairs(BRVS_FOOD_OPTIONS) do
-        local v = assetInst:GetAttribute(name)
-        if v ~= nil and v ~= false and v ~= 0 then
-            -- If numeric and >0, show a count; otherwise just show the name
-            if type(v) == "number" then
-                if v > 0 then
-                    table.insert(lines, string.format("• %s  ×%d", name, v))
-                end
-            else
-                table.insert(lines, string.format("• %s", name))
-            end
-        end
-    end
-
-    table.sort(lines, function(a, b) return a:lower() < b:lower() end)
-    BRVS_InvFoodPara:Set({
-        Title = "Food",
-        Content = (#lines == 0) and "(none)" or table.concat(lines, "\n")
-    })
+local function OwnedByLocal(m)
+	return m:GetAttribute("UserId") == BRVS_UserId
 end
 
-local function BRVS_BindInventoryFood()
-    BRVS_ClearInvFoodConns()
-
-    -- Resolve Players.LocalPlayer.PlayerGui.Data.Asset
-    local pg = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
-    local data = pg:WaitForChild("Data")
-    local asset = data:WaitForChild("Asset") -- attributes live here
-
-    -- Initial render
-    BRVS_RebuildFoodText(asset)
-
-    -- Listen for changes on each food attribute we care about
-    for _, name in ipairs(BRVS_FOOD_OPTIONS) do
-        table.insert(BRVS_InvFoodConns, asset:GetAttributeChangedSignal(name):Connect(function()
-            BRVS_RebuildFoodText(asset)
-        end))
-    end
-
-    -- Optional: if the Asset instance could be swapped out at runtime, rebind on replacement
-    -- (Uncomment if needed in your game)
-    -- table.insert(BRVS_InvFoodConns, data.ChildAdded:Connect(function(child)
-    --     if child.Name == "Asset" then BRVS_BindInventoryFood() end
-    -- end))
-    -- table.insert(BRVS_InvFoodConns, data.ChildRemoved:Connect(function(child)
-    --     if child.Name == "Asset" then BRVS_RebuildFoodText(nil) end
-    -- end))
+local function HasMark(m)
+	return m:FindFirstChild("ExclamationMark", true) ~= nil
 end
 
--- Paragraph element for Eggs
-local BRVS_InvEggPara = BRVS_InvTab:CreateParagraph({
-    Title = "Eggs",
-    Content = "loading..."
-})
-
--- Connections we manage for live updates
-local BRVS_InvEggConns, BRVS_InvEggPerItemConns = {}, {}
-
-local function BRVS_ClearInvEggConns()
-    for _, c in ipairs(BRVS_InvEggConns) do pcall(function() c:Disconnect() end) end
-    BRVS_InvEggConns = {}
-    for inst, list in pairs(BRVS_InvEggPerItemConns) do
-        for _, c in ipairs(list) do pcall(function() c:Disconnect() end) end
-        BRVS_InvEggPerItemConns[inst] = nil
-    end
+local function GetRF(m)
+	local rf = m:FindFirstChild("RF")
+	if rf and rf:IsA("RemoteFunction") then return rf end
+	rf = m:FindFirstChild("RF", true)
+	if rf and rf:IsA("RemoteFunction") then return rf end
+	return nil
 end
 
-local function BRVS_HumanEggName(tVal)
-    local base = tostring(tVal or "Unknown")
-    base = base:gsub("Egg$", "")
-    if #base > 0 then
-        base = base:sub(1,1):upper() .. base:sub(2):lower()
-    end
-    return base .. " egg"
+-- ===== Immediate hatch worker (no queue / no rate limit) =====
+local PLAYER_BLOCKS = BRVS_Workspace:FindFirstChild("PlayerBuiltBlocks")
+
+-- connections we manage so Stop can cleanly disconnect
+local BRVS_HatchConns = {}
+local function _clearHatchConns()
+	for _, c in ipairs(BRVS_HatchConns) do
+		pcall(function() c:Disconnect() end)
+	end
+	BRVS_HatchConns = {}
 end
 
-local function BRVS_RebuildEggInventoryText(eggsFolder)
-    if not BRVS_InvEggPara then return end
-    if not eggsFolder then
-        BRVS_InvEggPara:Set({ Title = "Eggs", Content = "(none)" })
-        return
-    end
+local function BRVS_StartHatchWorker()
+	if not PLAYER_BLOCKS then return end
 
-    -- Tally by (T, M), skipping eggs with attribute D
-	local counts = {}  -- key: T .. "\0" .. (M or "")
-	for _, egg in ipairs(eggsFolder:GetChildren()) do
-		-- Skip eggs marked with D
-		if not egg:GetAttribute("D") then
-			local T = egg:GetAttribute("T")
-			local M = egg:GetAttribute("M")
-			local key = tostring(T or "Unknown") .. "\0" .. tostring(M or "")
-			counts[key] = (counts[key] or 0) + 1
+	local hatchedCount = 0
+	local inFlight = setmetatable({}, { __mode = "k" }) -- debounce per egg
+	local finished = setmetatable({}, { __mode = "k" }) -- optional: mark done
+
+	-- label updater (no queue now)
+	task.spawn(function()
+		while BRVS_HatchEnabled do
+			local text = string.format("Status: %s | Hatched: %d",
+				"Running", hatchedCount)
+			if BRVS_HatchLabel then BRVS_HatchLabel:Set(text) end
+			task.wait(1)
+		end
+		if BRVS_HatchLabel then BRVS_HatchLabel:Set("Status: Disabled") end
+	end)
+
+	local function HatchOnce(egg)
+		if not BRVS_HatchEnabled then return end
+		if not egg or not egg.Parent then return end
+		if inFlight[egg] or finished[egg] then return end
+		if not (LooksLikeEgg(egg) and OwnedByLocal(egg) and HasMark(egg)) then return end
+
+		local rf = GetRF(egg)
+		if not rf then return end
+
+		inFlight[egg] = true
+		task.spawn(function()
+			local ok, success = pcall(function()
+				return rf:InvokeServer("Hatch")
+			end)
+			if ok and success == true then
+				finished[egg] = true
+				hatchedCount = hatchedCount + 1
+			end
+			inFlight[egg] = nil
+		end)
+	end
+
+	-- Seed: scan existing marked eggs and hatch immediately
+	for _, inst in ipairs(PLAYER_BLOCKS:GetDescendants()) do
+		if inst:IsA("Model") and LooksLikeEgg(inst) and OwnedByLocal(inst) and HasMark(inst) then
+			HatchOnce(inst)
 		end
 	end
 
+	-- Helper: when a model is added, also watch for its mark appearing
+	local function hookModel(m)
+		if not m or not m:IsA("Model") then return end
+		-- If it already has a mark, hatch now
+		if LooksLikeEgg(m) and OwnedByLocal(m) and HasMark(m) then
+			HatchOnce(m)
+		end
+		-- Watch for ExclamationMark under this model only
+		local con = m.DescendantAdded:Connect(function(d)
+			if not BRVS_HatchEnabled then return end
+			if d.Name == "ExclamationMark" then
+				local egg = d:FindFirstAncestorOfClass("Model")
+				if egg then HatchOnce(egg) end
+			end
+		end)
+		table.insert(BRVS_HatchConns, con)
+	end
 
-    -- Build pretty bullet lines
-    local lines = {}
-    for key, n in pairs(counts) do
-        local T, M = key:match("^(.-)\0(.*)$")
-        local name = BRVS_HumanEggName(T)
-        local line
-        if M and M ~= "" then
-            line = string.format("• %s | %s  ×%d", name, M, n)
-        else
-            line = string.format("• %s  ×%d", name, n)
-        end
-        table.insert(lines, line)
-    end
-    table.sort(lines, function(a,b) return a:lower() < b:lower() end)
-
-    local content = ""
-    if #lines == 0 then
-        content = "(none)"
-    else
-        -- join with newlines
-        for i, ln in ipairs(lines) do
-            if i == 1 then
-                content = ln
-            else
-                content = content .. "\n" .. ln
-            end
-        end
-    end
-
-    BRVS_InvEggPara:Set({ Title = "Eggs", Content = content })
+	-- Global watch: any new model or mark under PLAYER_BLOCKS
+	table.insert(BRVS_HatchConns, PLAYER_BLOCKS.DescendantAdded:Connect(function(inst)
+		if not BRVS_HatchEnabled then return end
+		if inst:IsA("Model") then
+			-- A new egg candidate appeared
+			hookModel(inst)
+		elseif inst.Name == "ExclamationMark" then
+			-- A mark appeared anywhere under PLAYER_BLOCKS
+			local egg = inst:FindFirstAncestorOfClass("Model")
+			if egg then HatchOnce(egg) end
+		end
+	end))
 end
 
-local function BRVS_BindInventoryEggs()
-    BRVS_ClearInvEggConns()
-
-    local pg   = BRVS_Player:WaitForChild("PlayerGui")
-    local data = pg:WaitForChild("Data")
-    local eggs = data:WaitForChild("Egg") -- array of uid instances with attributes T, optional M
-
-    BRVS_RebuildEggInventoryText(eggs)
-
-    -- React to adds/removes
-    table.insert(BRVS_InvEggConns, eggs.ChildAdded:Connect(function(child)
-        local list = {}
-        table.insert(list, child:GetAttributeChangedSignal("T"):Connect(function()
-            BRVS_RebuildEggInventoryText(eggs)
-        end))
-        table.insert(list, child:GetAttributeChangedSignal("M"):Connect(function()
-            BRVS_RebuildEggInventoryText(eggs)
-        end))
-		table.insert(list, child:GetAttributeChangedSignal("D"):Connect(function()
-			BRVS_RebuildEggInventoryText(eggs)
-		end))
-        BRVS_InvEggPerItemConns[child] = list
-        BRVS_RebuildEggInventoryText(eggs)
-    end))
-
-    table.insert(BRVS_InvEggConns, eggs.ChildRemoved:Connect(function(child)
-        local list = BRVS_InvEggPerItemConns[child]
-        if list then
-            for _, c in ipairs(list) do pcall(function() c:Disconnect() end) end
-        end
-        BRVS_InvEggPerItemConns[child] = nil
-        BRVS_RebuildEggInventoryText(eggs)
-    end))
-
-    -- Hook existing items for attribute changes
-    for _, child in ipairs(eggs:GetChildren()) do
-        local list = {}
-        table.insert(list, child:GetAttributeChangedSignal("T"):Connect(function()
-            BRVS_RebuildEggInventoryText(eggs)
-        end))
-        table.insert(list, child:GetAttributeChangedSignal("M"):Connect(function()
-            BRVS_RebuildEggInventoryText(eggs)
-        end))
-		table.insert(list, child:GetAttributeChangedSignal("D"):Connect(function()
-			BRVS_RebuildEggInventoryText(eggs)
-		end))
-        BRVS_InvEggPerItemConns[child] = list
-    end
+local function BRVS_StopHatchWorker()
+	BRVS_HatchEnabled = false
+	_clearHatchConns()
+	-- Label will be set to Disabled by the updater thread on next tick,
+	-- but ensure immediate UI feedback:
+	if BRVS_HatchLabel then BRVS_HatchLabel:Set("Status: Disabled") end
 end
 
--- call once on init (after window creation)
--- BRVS_BindInventoryEggs()
+-- UI: toggle + status label (label is created directly under the toggle)
+local BRVS_HatchToggle = BRVS_AutoHatchTab:CreateToggle({
+	Name = "Auto Hatch (on mark)",
+	CurrentValue = false,
+	Flag = "AutoHatchOnMark",
+	Callback = function(on)
+		if on then
+			if BRVS_HatchEnabled then return end
+			BRVS_HatchEnabled = true
+			BRVS_StartHatchWorker()
+		else
+			BRVS_StopHatchWorker()
+		end
+	end,
+})
 
--- =================== TAB: Utils ===================
+BRVS_HatchLabel = BRVS_AutoHatchTab:CreateLabel("Status: Disabled")
 local BRVS_UtilsTab = BRVS_Window:CreateTab("Utils", "sliders")
 
 BRVS_UtilsTab:CreateSection("Ultra Low")
@@ -1702,23 +1600,6 @@ do
 			end
 		end)
 	end
-
-	-- Auto Collect Big Pet
-	-- if BRVS_BigPetDelaySlider and BRVS_BigPetDelaySlider.CurrentValue then
-	-- 	BRVS_BigPetCollectInterval = BRVS_BigPetDelaySlider.CurrentValue
-	-- end
-	-- if BRVS_BigPetToggle and BRVS_BigPetToggle.CurrentValue and not BRVS_BigPetCollectThread then
-	-- 	BRVS_BigPetCollectEnabled = true
-	-- 	BRVS_BigPetCollectThread = task.spawn(function()
-	-- 		while BRVS_BigPetCollectEnabled do
-	-- 			local t = math.max(0.1, BRVS_BigPetDelaySlider.CurrentValue or BRVS_BigPetCollectInterval or 5)
-	-- 			local elapsed = 0
-	-- 			while BRVS_BigPetCollectEnabled and elapsed < t do
-	-- 				task.wait(0.1); elapsed = elapsed + 0.1
-	-- 			end
-	-- 		end
-	-- 	end)
-	-- end
 
 	-- Ultra Low restore
 	if BRVS_UltraLowToggle and BRVS_UltraLowToggle.CurrentValue then
