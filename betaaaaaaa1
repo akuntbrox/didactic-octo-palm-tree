@@ -598,7 +598,7 @@ local BRVS_Window = BRVS_Rayfield:CreateWindow({
 
 task.spawn(function()
 	while true do
-		task.wait(math.random(10, 120))
+		task.wait(math.random(10, 300))
 		BRVS_Rayfield:Notify({
 			Title = "Build A Zoo (SNOW) | HrafnHub",
 			Content = "Enjoying this ? Support me at discord.gg/HrafnHub",
