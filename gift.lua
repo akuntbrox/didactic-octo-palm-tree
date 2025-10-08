@@ -767,7 +767,9 @@ end
 local function _giftOnce_UID(uid, targetPlr)
     -- Focus -> Gift -> Unfocus (your example)
     FocusUID(uid)
+    task.wait(0.25)
     local ok, err = SendGiftTo(targetPlr)
+    task.wait(0.25)
     Unfocus()
     return ok, err
 end
@@ -814,7 +816,7 @@ end
 local function ScanGiftablePets()
     local eggsFolder = LocalPlayer:FindFirstChild("PlayerGui")
         and LocalPlayer.PlayerGui:FindFirstChild("Data")
-        and LocalPlayer.PlayerGui.Data:FindFirstChild("Egg")
+        and LocalPlayer.PlayerGui.Data:FindFirstChild("Pets")
     return _scanGiftableFromFolder(eggsFolder)
 end
 
@@ -1102,7 +1104,7 @@ GiftTab:Button({
         if itemMode == "Pet" and selectedPetKey then
             for _,pack in ipairs(petOptions) do
                 if pack.key == selectedPetKey then
-                    local list = { "Any" }
+                    local list = { "Any" , "None" }
                     for m,_ in pairs(pack.mutations or {}) do table.insert(list, tostring(m)) end
                     table.sort(list, function(a,b) if a=="Any" then return true elseif b=="Any" then return false end return a<b end)
                     if mutationDD.Refresh then mutationDD:Refresh(list) end
@@ -1114,7 +1116,7 @@ GiftTab:Button({
         elseif itemMode == "Egg" and selectedEggKey then
             for _,pack in ipairs(eggOptions) do
                 if pack.key == selectedEggKey then
-                    local list = { "Any" }
+                    local list = { "Any" , "None" }
                     for m,_ in pairs(pack.mutations or {}) do table.insert(list, tostring(m)) end
                     table.sort(list, function(a,b) if a=="Any" then return true elseif b=="Any" then return false end return a<b end)
                     if mutationDD.Refresh then mutationDD:Refresh(list) end
@@ -1184,10 +1186,41 @@ GiftTab:Toggle({
                     task.wait(0.2)
                 end
 
+            elseif itemMode == "Pet" then
+                -- Pet or Egg: pop UID by type (respect mutation if set)
+                local packs = (itemMode == "Pet") and ScanGiftablePets()
+                local key = (itemMode == "Pet") and selectedPetKey
+                local wantedM = (selectedMutation ~= "Any") and tonumber(selectedMutation) or (selectedMutation ~= "Any" and selectedMutation or nil)
+
+                while sending and toSend > 0 do
+                    target = _ensureTarget(selectedPlayer)
+                    if not target then
+                        WindUI:Notify({ Title="Gift", Content="Target left the game.", Duration=3, Icon="x" })
+                        break
+                    end
+
+                    -- pop a matching UID
+                    local uid = PopNextUID(packs, key, wantedM)
+                    if not uid then
+                        WindUI:Notify({ Title="Gift", Content="No more items of that type (or matching mutation).", Duration=3, Icon="x" })
+                        break
+                    end
+
+                    local ok, err = _giftOnce_UID(uid, target)
+                    if ok then
+                        sent = sent + 1
+                        toSend = toSend - 1
+                        setStatus(("Gifted %s %s to %s (%d/%d)"):format(itemMode:upper(), key, target.Name, sent, qtyToSend))
+                    else
+                        WindUI:Notify({ Title="Gift", Content="Gift failed: "..tostring(err), Duration=3, Icon="x" })
+                        break
+                    end
+                    task.wait(0.25)
+                end
             else
                 -- Pet or Egg: pop UID by type (respect mutation if set)
-                local packs = (itemMode == "Pet") and ScanGiftablePets() or ScanGiftableEggs()
-                local key = (itemMode == "Pet") and selectedPetKey or selectedEggKey
+                local packs = (itemMode == "Egg") and ScanGiftableEggs()
+                local key = (itemMode == "Egg") and selectedEggKey
                 local wantedM = (selectedMutation ~= "Any") and tonumber(selectedMutation) or (selectedMutation ~= "Any" and selectedMutation or nil)
 
                 while sending and toSend > 0 do
@@ -1244,6 +1277,8 @@ GiftTab:Button({
 refreshTiles()
 redrawInfo()
 WindUI:Notify({ Title = "Utils Farm", Content = "UI loaded. Use Diagnostics if auto-place fails.", Duration = 4 })
+
+
 
 print("[UtilsFarm] Press RightShift to hide/show UI. Top-center button appears when hidden.")
 
