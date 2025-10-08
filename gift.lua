@@ -151,7 +151,7 @@ Window:CreateTopbarButton("theme", "moon", function()
     WindUI:SetTheme(WindUI:GetCurrentTheme() == "Dark" and "Light" or "Dark")
     WindUI:Notify({ Title = "Theme", Content = "Current: " .. WindUI:GetCurrentTheme(), Duration = 2 })
 end, 999)
-
+local GiftSection = Window:Section({ Title = "Gifting", Opened = true })
 local Sections = {
     Main = Window:Section({ Title = "Farming", Opened = true }),
     Eggs = Window:Section({ Title = "Eggs", Opened = true }),
@@ -717,7 +717,7 @@ local function _getHRPFromChar(char)
 end
 
 local function _teleportBehind(targetPlayer, distance)
-    distance = distance or 8
+    distance = 3
     local myHRP = _getHRPFromChar(LocalPlayer.Character)
     local tgtHRP = targetPlayer and _getHRPFromChar(targetPlayer.Character)
     if not (myHRP and tgtHRP) then return false, "No HRP" end
@@ -887,7 +887,7 @@ local function _resolveFoodUIDForKey(key)
 end
 
 -- ---------- WindUI: Gift UI ----------
-local GiftSection = Window:Section({ Title = "Gifting", Opened = true })
+
 local GiftTab = GiftSection:Tab({ Title = "Auto Gift", Icon = "gift" })
 
 -- Reactive state
