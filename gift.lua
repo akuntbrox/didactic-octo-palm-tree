@@ -907,7 +907,25 @@ local qtyToSend = 1
 local sending = false
 
 -- Teleport settings
-local tpDistance = 8
+local tpDistance = 3
+
+--// Clear Hand Button
+local xPlayers = game:GetService("Players")
+local xplayer = xPlayers.LocalPlayer
+local xdeploy = xplayer:WaitForChild("PlayerGui"):WaitForChild("Data"):WaitForChild("Deploy")
+
+local asuw = GiftTab:Button({
+    Title = "Clear Hand",
+    Callback = function()
+        for i = 3, 8 do
+            local attr = "S"..i
+            if xdeploy:GetAttribute(attr) ~= nil then
+                xdeploy:SetAttribute(attr, nil)
+            end
+        end
+    end
+})
+
 
 -- UI controls
 local playerDD = GiftTab:Dropdown({
