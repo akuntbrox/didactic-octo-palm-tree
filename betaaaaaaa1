@@ -1597,7 +1597,7 @@ local function BRVS_CollectPetsWithProduce(rateMul)
 end
 
 -- === Focus → Place → Clear
-local PLACE_PACE = 0.15
+local PLACE_PACE = 0.3
 local function BRVS_FireFocus(uid)
     local re = BRVS_GetCharacterRE(); if not re then return end
     if uid then re:FireServer("Focus", uid) else re:FireServer("Focus") end
