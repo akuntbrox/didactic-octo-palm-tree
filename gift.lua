@@ -909,22 +909,50 @@ local sending = false
 -- Teleport settings
 local tpDistance = 3
 
---// Clear Hand Button
+--// Clear Hand Button (using FindFirstChild)
 local xPlayers = game:GetService("Players")
 local xplayer = xPlayers.LocalPlayer
-local xdeploy = xplayer:WaitForChild("PlayerGui"):WaitForChild("Data"):WaitForChild("Deploy")
+
+local xgui = xplayer:FindFirstChild("PlayerGui")
+local xdata = xgui and xgui:FindFirstChild("Data")
+local xdeploy = xdata and xdata:FindFirstChild("Deploy")
+
+local rs = game:GetService("ReplicatedStorage")
+local remote = rs:FindFirstChild("Remote")
+local deployRE = remote and remote:FindFirstChild("DeployRE")
 
 local asuw = GiftTab:Button({
     Title = "Clear Hand",
     Callback = function()
+        if not (xdeploy and deployRE) then
+            warn("[GiftUI] Deploy or DeployRE not found — cannot clear hand.")
+            return
+        end
+
+        local fired = 0
         for i = 3, 8 do
-            local attr = "S"..i
-            if xdeploy:GetAttribute(attr) ~= nil then
-                xdeploy:SetAttribute(attr, nil)
+            local attrName = "S" .. i
+            local val = xdeploy:GetAttribute(attrName)
+
+            if typeof(val) == "string" and #val > 0 then
+                local parts = string.split(val, "_")
+                local uid = parts[1] -- use index[1] as UID
+
+                if uid and #uid > 0 then
+                    local args = {{
+                        event = "deploy",
+                        uid = uid
+                    }}
+                    deployRE:FireServer(unpack(args))
+                    fired = fired + 1
+                end
             end
         end
+
+        print(("[GiftUI] Clear Hand: fired deploy for %d slot(s) (S3–S8)."):format(fired))
     end
 })
+
 
 
 -- UI controls
