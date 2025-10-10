@@ -349,13 +349,13 @@ local function FocusEgg(uid) dprint("Focus", uid) CharacterRE_Fire("Focus", uid)
 local DST_FORMAT = "Vector3.new" -- "vector.create" | "Vector3.new" | "TableXYZ"
 local function BuildDSTVector(pos)
     if DST_FORMAT == "Vector3.new" then
-        return Vector3.new(pos.X, pos.Y, pos.Z)
+        return Vector3.new(pos.X, pos.Y+4, pos.Z)
     elseif DST_FORMAT == "TableXYZ" then
-        return { X = pos.X, Y = pos.Y, Z = pos.Z }
+        return { X = pos.X, Y = pos.Y+4, Z = pos.Z }
     else
         -- default vector.create (if available, else fallback to Vector3)
-        if vector and vector.create then return vector.create(pos.X, pos.Y, pos.Z) end
-        return Vector3.new(pos.X, pos.Y, pos.Z)
+        if vector and vector.create then return vector.create(pos.X, pos.Y+4, pos.Z) end
+        return Vector3.new(pos.X, pos.Y+4, pos.Z)
     end
 end
 
