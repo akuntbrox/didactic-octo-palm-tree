@@ -936,7 +936,7 @@ local asuw = GiftTab:Button({
 
             if typeof(val) == "string" and #val > 0 then
                 local parts = string.split(val, "_")
-                local uid = parts[1] -- use index[1] as UID
+                local uid = parts[2] -- use index[1] as UID
 
                 if uid and #uid > 0 then
                     local args = {{
