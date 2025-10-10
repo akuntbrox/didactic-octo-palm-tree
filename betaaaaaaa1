@@ -1398,7 +1398,7 @@ end
 local function BRVS_TileToDST(tileInst)
     local cf = BRVS_GetInstCF(tileInst); if not cf then return nil end
     local p = cf.Position
-    return BRVS_VectorCreate(p.X, p.Y, p.Z)
+    return BRVS_VectorCreate(p.X, p.Y+4, p.Z)
 end
 
 local function BRVS_CollectSortedTilesForMe(pattern)
@@ -1597,7 +1597,7 @@ local function BRVS_CollectPetsWithProduce(rateMul)
 end
 
 -- === Focus → Place → Clear
-local PLACE_PACE = 0.35
+local PLACE_PACE = 0.15
 local function BRVS_FireFocus(uid)
     local re = BRVS_GetCharacterRE(); if not re then return end
     if uid then re:FireServer("Focus", uid) else re:FireServer("Focus") end
