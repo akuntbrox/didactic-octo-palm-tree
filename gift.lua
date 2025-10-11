@@ -898,26 +898,53 @@ local function PopNextUID(packs, key, wantedMutation) -- wantedMutation: nil = a
     return nil
 end
 
--- For foods, fetch remaining qty live
+-- Fetch remaining food quantity directly from Asset Configuration
 local function _remainingForFoodKey(key)
-    local assetFolder = LocalPlayer:FindFirstChild("PlayerGui")
+    local assetConfig = LocalPlayer:FindFirstChild("PlayerGui")
         and LocalPlayer.PlayerGui:FindFirstChild("Data")
         and LocalPlayer.PlayerGui.Data:FindFirstChild("Asset")
-    if not assetFolder then return 0 end
-    local inst = assetFolder:FindFirstChild(key)
-    if not inst then return 0 end
-    return _getAttrInt(inst, { "Count", "Cnt", "Qty", "A", "Amount", "Q" }) or 0
+    if not assetConfig then return 0 end
+
+    -- 1) Try attribute first
+    local attrVal = assetConfig:GetAttribute(key)
+    if attrVal and attrVal ~= 0 then
+        return tonumber(attrVal) or 0
+    end
+
+    -- 2) Try ValueBase child (e.g., IntValue / NumberValue)
+    local child = assetConfig:FindFirstChild(key)
+    if child then
+        local ok, val = pcall(function() return child.Value end)
+        if ok and val and val ~= 0 then
+            return tonumber(val) or 0
+        end
+    end
+
+    return 0
 end
 
--- Some games accept item key as focus; we try to resolve a UID-like instance first
+-- No real UID anymore; just return the key if it exists
 local function _resolveFoodUIDForKey(key)
-    local assetFolder = LocalPlayer:FindFirstChild("PlayerGui")
+    local assetConfig = LocalPlayer:FindFirstChild("PlayerGui")
         and LocalPlayer.PlayerGui:FindFirstChild("Data")
         and LocalPlayer.PlayerGui.Data:FindFirstChild("Asset")
-    if not assetFolder then return nil end
-    local inst = assetFolder:FindFirstChild(key)
-    return inst and inst.Name or nil
+    if not assetConfig then return nil end
+
+    -- Check if key exists as attribute
+    local attrs = assetConfig:GetAttributes()
+    if attrs[key] ~= nil then
+        return key
+    end
+
+    -- Or as ValueBase child
+    local child = assetConfig:FindFirstChild(key)
+    if child then
+        return key
+    end
+
+    return nil
 end
+
 
 -- ---------- WindUI: Gift UI ----------
 
