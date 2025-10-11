@@ -829,23 +829,56 @@ local function ScanGiftableEggs()
 end
 
 -- FOODS: from PlayerGui.Data.Asset
-local function ScanGiftableFoods()
-    local tbl = {}
-    local assetFolder = LocalPlayer:FindFirstChild("PlayerGui")
+-- === Giftable Foods (Configuration-based) ===================================
+local DEFAULT_FOODS = {
+    "Strawberry","Blueberry","Watermelon","Apple","Orange","Corn","Banana","Grape",
+    "Pear","Pineapple","DragonFruit","GoldMango","BloodstoneCycad","ColossalPinecone",
+    "VoltGinkgo","DeepseaPearlFruit","Durian",
+}
+
+local function _toSet(list)
+    local s = {}
+    for _, v in ipairs(list or {}) do s[v] = true end
+    return s
+end
+
+-- Scans PlayerGui.Data.Asset (Configuration) for foods.
+-- Supports:
+--  1) Attributes on the Configuration (e.g., Asset:SetAttribute("Banana", 12))
+--  2) ValueBase children under the Configuration (e.g., IntValue/NumberValue named "Banana")
+local function ScanGiftableFoods(foodsList)
+    local out = {}
+    local FOOD_SET = _toSet(foodsList or DEFAULT_FOODS)
+
+    local assetConfig = LocalPlayer:FindFirstChild("PlayerGui")
         and LocalPlayer.PlayerGui:FindFirstChild("Data")
-        and LocalPlayer.PlayerGui.Data:FindFirstChild("Asset")
+        and LocalPlayer.PlayerGui.Data:FindFirstChild("Asset") -- should be a Configuration
 
-    if not assetFolder then return tbl end
+    if not assetConfig then return out end
 
-    for _, it in ipairs(assetFolder:GetChildren()) do
-        local qty = _getAttrInt(it, { "Count", "Cnt", "Qty", "A", "Amount", "Q" }) or 0
-        if qty > 0 then
-            table.insert(tbl, { key = it.Name, label = ("%s  x%d"):format(it.Name, qty), count = qty })
+    -- 1) Read from Configuration attributes
+    local attrs = assetConfig:GetAttributes()
+    for foodName, val in pairs(attrs) do
+        if FOOD_SET[foodName] and val ~= nil and val ~= 0 and val ~= false and val ~= "" then
+            table.insert(out, { food = foodName, value = val })
         end
     end
-    table.sort(tbl, function(a,b) return a.key < b.key end)
-    return tbl
+
+    -- 2) Read from child Value objects (if present)
+    for _, child in ipairs(assetConfig:GetChildren()) do
+        if FOOD_SET[child.Name] then
+            -- Only accept Roblox ValueBase types that carry a .Value
+            local ok, v = pcall(function() return child.Value end)
+            if ok and v ~= nil and v ~= 0 and v ~= false and v ~= "" then
+                table.insert(out, { food = child.Name, value = v })
+            end
+        end
+    end
+
+    table.sort(out, function(a, b) return a.food < b.food end)
+    return out
 end
+
 
 -- Get next UID for selected type with optional mutation filter (removes from list)
 local function PopNextUID(packs, key, wantedMutation) -- wantedMutation: nil = any
@@ -1049,18 +1082,19 @@ local eggDD = GiftTab:Dropdown({
     end
 })
 
+-- RefreshFoodsUI
+local foods = ScanGiftableFoods()
+local labels = {}
+for _, item in ipairs(foods) do
+    table.insert(labels, ("%s (x%s)"):format(item.food, tostring(item.value)))
+end
+if #labels == 0 then labels = { "None found" } end
+
 local foodDD = GiftTab:Dropdown({
     Title = "Food",
-    Values = (function()
-        local arr = {}
-        for _,f in ipairs(foodOptions) do table.insert(arr, f.key .. "  (x" .. f.count .. ")") end
-        return (#arr > 0) and arr or { "No foods…" }
-    end)(),
-    Value = (selectedFoodKey and (selectedFoodKey .. "  (x" .. (foodOptions[1] and foodOptions[1].count or 0) .. ")")) or nil,
-    Callback = function(v)
-        local k = v and v:match("^(.-)%s+%(") or v
-        selectedFoodKey = k
-    end
+    Values = labels,
+    Value = labels[1],
+    Callback = function(_) end
 })
 
 local qtyBox = GiftTab:Input({
@@ -1074,18 +1108,6 @@ local qtyBox = GiftTab:Input({
     end
 })
 
--- Teleport behind
-local tpBox = GiftTab:Input({
-    Title = "Teleport Distance (behind target)",
-    Placeholder = tostring(tpDistance),
-    Numeric = true,
-    Callback = function(txt)
-        local n = tonumber(txt) or tpDistance
-        if n < 2 then n = 2 end
-        if n > 30 then n = 30 end
-        tpDistance = math.floor(n)
-    end
-})
 
 GiftTab:Button({
     Title = "Teleport Behind Target",
@@ -1135,7 +1157,7 @@ GiftTab:Button({
             end
         end
 
-        foodOptions = ScanGiftableFoods()
+        foodOptions = RefreshFoodsUI()
         do
             local arr = {}
             for _,f in ipairs(foodOptions) do table.insert(arr, f.key .. "  (x" .. f.count .. ")") end
