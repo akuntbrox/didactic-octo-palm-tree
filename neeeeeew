@@ -1,233 +1,1167 @@
--- ====== WindUI loader ========================================================
-local WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
+--========================================================
+-- BRVS: Rayfield-powered Tools (Auto Buy, Auto Collect, Inventory, Utils)
+--========================================================
 
--- ====== Services ============================================================
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace = game:GetService("Workspace")
-local LocalPlayer = Players.LocalPlayer
-local LocalPlayerUserId = LocalPlayer and LocalPlayer.UserId or 0
+--// Services (prefixed)
+local BRVS_Players = game:GetService("Players")
+local BRVS_ReplicatedStorage = game:GetService("ReplicatedStorage")
+local BRVS_Lighting = game:GetService("Lighting")
+local BRVS_Workspace = game:GetService("Workspace")
 
--- ====== UI Helper ===========================================================
-local function SetPara(p, text)
-    if not p then return end
-    if typeof(p) == "table" then
-        if p.SetDesc then p:SetDesc(text)
-        elseif p.Set then p:Set(text)
-        elseif p.Update then p:Update(text) end
-    end
-end
+local BRVS_Player = BRVS_Players.LocalPlayer
+local BRVS_UserId = BRVS_Player.UserId
 
--- Debug
-local DEBUG = false
-local function dprint(...) if DEBUG then print("[GiftFixed]", ...) end end
-
--- ====== Fixed lists for Auto Buy ============================================
+--// Fixed lists (prefixed)
 local BRVS_EGG_NAMES = {
-    "BasicEgg","RareEgg","SuperRareEgg","EpicEgg","LegendEgg",
-    "SnowbunnyEgg","PrismaticEgg","HyperEgg","DarkGoatyEgg",
-    "VoidEgg","BowserEgg","DemonEgg","RhinoRockEgg","CornEgg",
-    "BoneDragonEgg","UltraEgg","DinoEgg","FlyEgg","SaberCubEgg",
-    "UnicornEgg","AncientEgg","SeaDragonEgg","UnicornProEgg",
-    "GeneralKongEgg","PegasusEgg",
+	"BasicEgg","RareEgg","SuperRareEgg","EpicEgg","LegendEgg",
+	"SnowbunnyEgg","PrismaticEgg","HyperEgg","DarkGoatyEgg",
+	"VoidEgg","BowserEgg","DemonEgg","RhinoRockEgg","CornEgg",
+	"BoneDragonEgg","UltraEgg","DinoEgg","FlyEgg","SaberCubEgg",
+	"UnicornEgg","AncientEgg","SeaDragonEgg","UnicornProEgg",
+	"GeneralKongEgg","PegasusEgg",
 }
 local BRVS_MUTATIONS = { "None","Golden","Diamond","Electirc","Fire","Dino","Snow" }
+
+-- Rayfield display lists with explicit "Any"
+local BRVS_EGG_OPTIONS = (function() local t={"Any"} for _,v in ipairs(BRVS_EGG_NAMES) do table.insert(t,v) end return t end)()
+local BRVS_MUTATION_OPTIONS = (function() local t={"Any"} for _,v in ipairs(BRVS_MUTATIONS) do table.insert(t,v) end return t end)()
+
+-- Food options (multi-select)
 local BRVS_FOOD_OPTIONS = {
-    "Strawberry","Blueberry","Watermelon","Apple","Orange","Corn","Banana","Grape",
-    "Pear","Pineapple","DragonFruit","GoldMango","BloodstoneCycad","ColossalPinecone",
-    "VoltGinkgo","DeepseaPearlFruit","Durian",
+	"Strawberry","Blueberry","Watermelon","Apple","Orange","Corn","Banana","Grape",
+	"Pear","Pineapple","DragonFruit","GoldMango","BloodstoneCycad","ColossalPinecone",
+	"VoltGinkgo","DeepseaPearlFruit","Durian",
 }
 
--- ====== Island / tile helpers ==============================================
-local function BRVS_GetMyIsland()
-    local art = Workspace:FindFirstChild("Art")
-    if not art then return nil end
-    for i = 1, 7 do
-        local island = art:FindFirstChild("Island_"..i)
-        if island and island:GetAttribute("OccupyingPlayerId") == LocalPlayerUserId then
-            return island, i
-        end
+--// World paths
+local BRVS_ART_FOLDER = workspace:WaitForChild("Art")
+local BRVS_EGGS_FOLDER = BRVS_ReplicatedStorage:WaitForChild("Eggs")
+
+--// Remotes/config
+local BRVS_BUYEGG_REMOTE_PATH = { "Remote", "CharacterRE" } -- ReplicatedStorage.Remote.CharacterRE
+local BRVS_BUYEGG_ACTION = "BuyEgg"
+local BRVS_AUTO_BUY_COOLDOWN = 2 -- seconds per-egg debounce
+
+local BRVS_FOOD_REMOTE_PATH = { "Remote", "FoodStoreRE" } -- ReplicatedStorage.Remote.FoodStoreRE
+
+--========================================================
+-- Utils (prefixed)
+local function BRVS_GetMyIslandName()
+	for i = 1, 6 do
+		local island = BRVS_ART_FOLDER:FindFirstChild("Island_" .. i)
+		if island and island:GetAttribute("OccupyingPlayerId") == BRVS_UserId then
+			return island.Name
+		end
+	end
+	return nil
+end
+
+local function BRVS_ContainsOrAny(list, value)
+	if not list or #list == 0 then return true end
+	for _, v in ipairs(list) do
+		if v == "Any" then return true end
+		if v == value then return true end
+	end
+	return false
+end
+
+-- NEW: safe remote getter (non-blocking)
+local function BRVS_GetRemote(pathArray)
+	local node = BRVS_ReplicatedStorage
+	for _, name in ipairs(pathArray) do
+		node = node and node:FindFirstChild(name)
+		if not node then return nil end
+	end
+	return node
+end
+
+--========================================================
+-- State (prefixed)
+local BRVS_IslandName = BRVS_GetMyIslandName()
+local BRVS_IslandFolder = BRVS_IslandName and (BRVS_EGGS_FOLDER:FindFirstChild(BRVS_IslandName) or BRVS_EGGS_FOLDER:WaitForChild(BRVS_IslandName, 10)) or nil
+local BRVS_Conns, BRVS_PerEggConns = {}, {}
+local function BRVS_ClearConns(t) for _, c in ipairs(t) do pcall(function() c:Disconnect() end) end table.clear(t) end
+local function BRVS_ClearPerEggConns() for _, b in pairs(BRVS_PerEggConns) do for _, c in ipairs(b) do pcall(function() c:Disconnect() end) end end BRVS_PerEggConns = {} end
+
+-- User selections (from Rayfield)
+local BRVS_SelEggNames = {}   -- {} or includes "Any"
+local BRVS_SelMutations = {}  -- {} or includes "Any" / "None"
+
+-- Toggles / misc
+local BRVS_AutoBuyEnabled = false
+local BRVS_LastFireAt = {} -- [Instance]=time
+
+-- Food auto-buy state
+local BRVS_SelectedFood = {} -- multi-select strings
+local BRVS_FoodBuyEnabled = false
+local BRVS_FoodBuyInterval = 0.2 -- fixed delay (seconds)
+local BRVS_FoodBuyThread
+
+-- Anti AFK (jump)
+local BRVS_AntiAfkEnabled = false
+local BRVS_AntiAfkConn
+local BRVS_AntiAfkThread
+
+-- Ultra Low (merged No Lag + Low Graphics)
+local BRVS_SavedStates = {}  -- [Instance] = original Enabled (emitters/lights)
+local BRVS_Terrain = workspace:FindFirstChildOfClass("Terrain")
+
+-- Auto Collect (new tab)
+local BRVS_PetCollectEnabled = false
+local BRVS_PetCollectInterval = 3
+local BRVS_PetCollectThread
+
+local BRVS_BigPetCollectEnabled = false
+local BRVS_BigPetCollectInterval = 5
+local BRVS_BigPetCollectThread
+
+--========================================================
+-- Anti-AFK (jump) helpers (prefixed)
+local function BRVS_GetHumanoid()
+	local char = BRVS_Players.LocalPlayer.Character or BRVS_Players.LocalPlayer.CharacterAdded:Wait()
+	return char:FindFirstChildOfClass("Humanoid")
+end
+
+local function BRVS_PerformJump(times)
+	times = times or 1
+	local hum = BRVS_GetHumanoid()
+	if not hum then return end
+	for _ = 1, times do
+		hum.Jump = true
+		hum:ChangeState(Enum.HumanoidStateType.Jumping)
+		task.wait(0.2)
+	end
+end
+
+--========================================================
+-- Ultra Low helpers/state (from Low Graphics) (prefixed)
+local BRVS_LG_CONFIG = {
+	DisableTextures             = true,
+	HideSurfaceAppearance       = false,
+	DisableNonPlayerAnimations  = true,
+}
+
+local function BRVS_g(inst, prop) local ok,v=pcall(function() return inst[prop] end); return ok and v or nil end
+local function BRVS_s(inst, prop, val) pcall(function() inst[prop]=val end) end
+
+local BRVS_lightingProps = {
+	"GlobalShadows","EnvironmentSpecularScale","EnvironmentDiffuseScale","Brightness",
+	"Ambient","OutdoorAmbient","FogStart","FogEnd","FogColor","ClockTime","ShadowSoftness","Technology"
+}
+local BRVS_terrainProps  = {
+	"Decoration","WaterWaveSize","WaterWaveSpeed","WaterReflectance","WaterTransparency","WaterColor"
+}
+
+local BRVS_LG_original = {
+	lighting = {}, terrain = {}, postFX = {}, atmo = nil,
+	decals = {}, textures = {}, surfaceA = {}
+}
+for _,p in ipairs(BRVS_lightingProps) do BRVS_LG_original.lighting[p]=BRVS_g(BRVS_Lighting,p) end
+for _,fx in ipairs(BRVS_Lighting:GetDescendants()) do
+	if fx:IsA("PostEffect") then BRVS_LG_original.postFX[fx]=fx.Enabled end
+end
+do
+	local A = BRVS_Lighting:FindFirstChildOfClass("Atmosphere")
+	if A then
+		BRVS_LG_original.atmo = { obj=A, props={
+			Density=BRVS_g(A,"Density"), Offset=BRVS_g(A,"Offset"), Color=BRVS_g(A,"Color"),
+			Decay=BRVS_g(A,"Decay"), Glare=BRVS_g(A,"Glare"), Haze=BRVS_g(A,"Haze"),
+			MieScatteringScale=BRVS_g(A,"MieScatteringScale"),
+		}}
+	end
+end
+if BRVS_Terrain then for _,p in ipairs(BRVS_terrainProps) do BRVS_LG_original.terrain[p]=BRVS_g(BRVS_Terrain,p) end end
+
+local function BRVS_LG_snapshotVisuals()
+	if BRVS_LG_CONFIG.DisableTextures then
+		for _,obj in ipairs(workspace:GetDescendants()) do
+			if obj:IsA("Decal") then if BRVS_LG_original.decals[obj]==nil then BRVS_LG_original.decals[obj]=BRVS_g(obj,"Transparency") end
+			elseif obj:IsA("Texture") then if BRVS_LG_original.textures[obj]==nil then BRVS_LG_original.textures[obj]=BRVS_g(obj,"Transparency") end
+			end
+		end
+	end
+	if BRVS_LG_CONFIG.HideSurfaceAppearance then
+		for _,obj in ipairs(workspace:GetDescendants()) do
+			if obj:IsA("SurfaceAppearance") and BRVS_LG_original.surfaceA[obj]==nil then
+				BRVS_LG_original.surfaceA[obj] = {
+					ColorMap=BRVS_g(obj,"ColorMap"), MetalnessMap=BRVS_g(obj,"MetalnessMap"),
+					NormalMap=BRVS_g(obj,"NormalMap"), RoughnessMap=BRVS_g(obj,"RoughnessMap")
+				}
+			end
+		end
+	end
+end
+BRVS_LG_snapshotVisuals()
+
+-- Non-player animation blocker
+local BRVS_LG_animBlockConns, BRVS_LG_animAddedConn = {}, nil
+local function BRVS_LG_isLocalCharacterHumanoid(h) local c=BRVS_Players.LocalPlayer.Character return c and h and h:IsDescendantOf(c) end
+local function BRVS_LG_stopAnimator(anim)
+	for _,t in ipairs(anim:GetPlayingAnimationTracks()) do pcall(function() t:Stop(0) end) end
+	if not BRVS_LG_animBlockConns[anim] then
+		BRVS_LG_animBlockConns[anim]=anim.AnimationPlayed:Connect(function(track) pcall(function() track:Stop(0) end) end)
+	end
+end
+local function BRVS_LG_applyAnimationBlock()
+	for _,o in ipairs(workspace:GetDescendants()) do
+		if o:IsA("Humanoid") then
+			if not BRVS_LG_isLocalCharacterHumanoid(o) then local a=o:FindFirstChildOfClass("Animator"); if a then BRVS_LG_stopAnimator(a) end end
+		elseif o:IsA("AnimationController") then local a=o:FindFirstChildOfClass("Animator"); if a then BRVS_LG_stopAnimator(a) end end
+	end
+	if not BRVS_LG_animAddedConn then
+		BRVS_LG_animAddedConn = workspace.DescendantAdded:Connect(function(o)
+			if o:IsA("Animator") and BRVS_LG_CONFIG.DisableNonPlayerAnimations then
+				local h = o.Parent and o.Parent:FindFirstChildOfClass("Humanoid")
+				if h and BRVS_LG_isLocalCharacterHumanoid(h) then return end
+				BRVS_LG_stopAnimator(o)
+			end
+		end)
+	end
+end
+local function BRVS_LG_clearAnimationBlock()
+	for a,c in pairs(BRVS_LG_animBlockConns) do if c then c:Disconnect() end BRVS_LG_animBlockConns[a]=nil end
+	if BRVS_LG_animAddedConn then BRVS_LG_animAddedConn:Disconnect(); BRVS_LG_animAddedConn=nil end
+end
+
+local BRVS_LG_active = false
+local function BRVS_ApplyLowGraphics()
+	BRVS_s(BRVS_Lighting,"GlobalShadows",false)
+	BRVS_s(BRVS_Lighting,"EnvironmentSpecularScale",0)
+	BRVS_s(BRVS_Lighting,"EnvironmentDiffuseScale",0)
+	BRVS_s(BRVS_Lighting,"ShadowSoftness",0)
+	for fx in pairs(BRVS_LG_original.postFX) do if fx and fx.Parent then BRVS_s(fx,"Enabled",false) end end
+	if BRVS_LG_original.atmo and BRVS_LG_original.atmo.obj then local A=BRVS_LG_original.atmo.obj
+		BRVS_s(A,"Density",0); BRVS_s(A,"Glare",0); BRVS_s(A,"Haze",0); BRVS_s(A,"MieScatteringScale",0) end
+	if BRVS_Terrain then
+        BRVS_s(BRVS_Terrain, "Decoration", false)
+        BRVS_s(BRVS_Terrain, "WaterWaveSize", 0)
+        BRVS_s(BRVS_Terrain, "WaterWaveSpeed", 0)
+        BRVS_s(BRVS_Terrain, "WaterReflectance", 0)
+        BRVS_s(BRVS_Terrain, "WaterTransparency", 0)
+        BRVS_s(BRVS_Terrain, "WaterColor", Color3.fromRGB(85, 170, 255))
+	end
+	if BRVS_LG_CONFIG.DisableTextures then
+		for o in pairs(BRVS_LG_original.decals)   do if o and o.Parent then BRVS_s(o,"Transparency",1) end end
+		for o in pairs(BRVS_LG_original.textures) do if o and o.Parent then BRVS_s(o,"Transparency",1) end end
+	end
+	if BRVS_LG_CONFIG.HideSurfaceAppearance then
+		for o in pairs(BRVS_LG_original.surfaceA) do if o and o.Parent then
+			BRVS_s(o,"ColorMap",""); BRVS_s(o,"MetalnessMap",""); BRVS_s(o,"NormalMap",""); BRVS_s(o,"RoughnessMap","") end end
+	end
+	if BRVS_LG_CONFIG.DisableNonPlayerAnimations then BRVS_LG_applyAnimationBlock() end
+	BRVS_LG_active = true
+end
+local function BRVS_RestoreLowGraphics()
+	for p,v in pairs(BRVS_LG_original.lighting) do BRVS_s(BRVS_Lighting,p,v) end
+	for fx,was in pairs(BRVS_LG_original.postFX) do if fx and fx.Parent then BRVS_s(fx,"Enabled",was) end end
+	if BRVS_LG_original.atmo and BRVS_LG_original.atmo.obj and BRVS_LG_original.atmo.props then
+		for p,v in pairs(BRVS_LG_original.atmo.props) do BRVS_s(BRVS_LG_original.atmo.obj,p,v) end
+	end
+	if BRVS_Terrain then for p,v in pairs(BRVS_LG_original.terrain) do BRVS_s(BRVS_Terrain,p,v) end end
+	if BRVS_LG_CONFIG.DisableTextures then
+		for o,prev in pairs(BRVS_LG_original.decals)   do if o and o.Parent then BRVS_s(o,"Transparency",prev) end end
+		for o,prev in pairs(BRVS_LG_original.textures) do if o and o.Parent then BRVS_s(o,"Transparency",prev) end end
+	end
+	if BRVS_LG_CONFIG.HideSurfaceAppearance then
+		for o,props in pairs(BRVS_LG_original.surfaceA) do if o and o.Parent then for k,v in pairs(props) do BRVS_s(o,k,v) end end end
+	end
+	BRVS_LG_clearAnimationBlock()
+	BRVS_LG_active = false
+end
+
+local function BRVS_ApplyUltraLow()
+	for _, inst in ipairs(workspace:GetDescendants()) do
+		if inst:IsA("ParticleEmitter") or inst:IsA("Trail") or inst:IsA("Beam") or inst:IsA("Highlight")
+		or inst:IsA("PointLight") or inst:IsA("SpotLight") or inst:IsA("SurfaceLight") then
+			if BRVS_SavedStates[inst] == nil then BRVS_SavedStates[inst] = inst.Enabled end
+			inst.Enabled = false
+		end
+	end
+	BRVS_Lighting.GlobalShadows = false
+	BRVS_ApplyLowGraphics()
+end
+
+local function BRVS_RestoreUltraLow()
+	for inst, was in pairs(BRVS_SavedStates) do
+		if inst and inst.Parent then
+			if inst:IsA("ParticleEmitter") or inst:IsA("Trail") or inst:IsA("Beam") or inst:IsA("Highlight")
+			or inst:IsA("PointLight") or inst:IsA("SpotLight") or inst:IsA("SurfaceLight") then
+				inst.Enabled = (was == true)
+			end
+		end
+	end
+	table.clear(BRVS_SavedStates)
+	BRVS_Lighting.GlobalShadows = true
+	BRVS_RestoreLowGraphics()
+end
+
+--========================================================
+-- Core logic (eggs) (prefixed)
+local function BRVS_CurrentSelectionsMatch(egg)
+	local nameVal = egg:GetAttribute("T") or "(no value)"
+	local rawM    = egg:GetAttribute("M")  -- may be nil or ""
+	local mutVal  = rawM or "(no value)"
+
+	local nameOk = BRVS_ContainsOrAny(BRVS_SelEggNames, nameVal)
+
+	local mutOk
+	if not BRVS_SelMutations or #BRVS_SelMutations == 0 then
+		mutOk = true
+	else
+		mutOk = false
+		for _, opt in ipairs(BRVS_SelMutations) do
+			if opt == "Any" then mutOk = true break end
+			if opt == mutVal then mutOk = true break end
+			if opt == "None" and (rawM == nil or rawM == "") then mutOk = true break end
+		end
+	end
+
+	return nameOk and mutOk
+end
+
+-- === Final re-check (strict) ===
+local function BRVS_norm(v)
+	if v == nil then return "none" end
+	if typeof(v) ~= "string" then v = tostring(v) end
+	v = v:lower():gsub("%s+", ""):gsub("[_%-%s]", "")
+	if v == "" or v == "(novalue)" then v = "none" end
+	return v
+end
+
+-- filter can be string or an array; "Any" passes
+local function BRVS_matchesFilter(value, filter)
+	if filter == nil then return true end
+	if type(filter) == "table" then
+		for _, f in ipairs(filter) do
+			if BRVS_matchesFilter(value, f) then return true end
+		end
+		return false
+	end
+	if type(filter) == "string" and BRVS_norm(filter) == "any" then return true end
+	return BRVS_norm(value) == BRVS_norm(filter)
+end
+
+-- Uses egg attributes vs. current UI selections (BRVS_SelEggNames/BRVS_SelMutations)
+local function BRVS_PassesFinalSelection(egg, nameFilter, mutFilter)
+	if not egg then return false end
+	local eggName = egg:GetAttribute("T") or egg.Name or ""
+	local mutAttr = egg:GetAttribute("M")
+	if mutAttr == nil or mutAttr == "" then mutAttr = "None" end
+	return BRVS_matchesFilter(eggName, nameFilter) and BRVS_matchesFilter(mutAttr, mutFilter)
+end
+
+
+local function BRVS_AttemptAutoBuy(egg)
+	if not BRVS_AutoBuyEnabled then return end
+	if not egg or not egg.Parent or egg.Parent ~= BRVS_IslandFolder then return end
+	if not BRVS_CurrentSelectionsMatch(egg) then return end
+
+	if not BRVS_PassesFinalSelection(egg, BRVS_SelEggNames, BRVS_SelMutations) then
+		return
+	end
+
+	local now = os.clock()
+	if BRVS_LastFireAt[egg] and (now - BRVS_LastFireAt[egg] < BRVS_AUTO_BUY_COOLDOWN) then return end
+	BRVS_LastFireAt[egg] = now
+
+	local args = { BRVS_BUYEGG_ACTION, egg.Name } -- "BuyEgg", "<uid>"
+	local remote = BRVS_ReplicatedStorage:WaitForChild(BRVS_BUYEGG_REMOTE_PATH[1]):WaitForChild(BRVS_BUYEGG_REMOTE_PATH[2])
+	if remote and remote:IsA("RemoteEvent") then
+		remote:FireServer(table.unpack(args))
+	else
+		warn("BRVS AutoBuy: RemoteEvent missing at ReplicatedStorage." .. table.concat(BRVS_BUYEGG_REMOTE_PATH, "."))
+	end
+end
+
+local function BRVS_PrintMatches()
+	if not BRVS_IslandFolder then return end
+	-- print("=== BRVS Matching Eggs ===")
+	for _, e in ipairs(BRVS_IslandFolder:GetChildren()) do
+		local tVal = e:GetAttribute("T") or "(no value)"
+		local mVal = e:GetAttribute("M") or "(no value)"
+		if BRVS_CurrentSelectionsMatch(e) then
+			-- print(string.format(" - %s | Name: %s | Mutation: %s", e.Name, tVal, mVal))
+		end
+	end
+end
+
+local function BRVS_RescanAutoBuy()
+	if not (BRVS_AutoBuyEnabled and BRVS_IslandFolder) then return end
+	for _, egg in ipairs(BRVS_IslandFolder:GetChildren()) do
+		BRVS_AttemptAutoBuy(egg)
+		task.wait()
+	end
+end
+
+local function BRVS_BindIsland(newName)
+	BRVS_ClearConns(BRVS_Conns); BRVS_ClearPerEggConns()
+	BRVS_IslandName = newName
+	BRVS_IslandFolder = BRVS_IslandName and (BRVS_EGGS_FOLDER:FindFirstChild(BRVS_IslandName) or BRVS_EGGS_FOLDER:WaitForChild(BRVS_IslandName, 10)) or nil
+	if not BRVS_IslandFolder then return end
+
+	for _, egg in ipairs(BRVS_IslandFolder:GetChildren()) do
+		local c1 = egg:GetAttributeChangedSignal("T"):Connect(function() BRVS_PrintMatches(); BRVS_AttemptAutoBuy(egg) end)
+		local c2 = egg:GetAttributeChangedSignal("M"):Connect(function() BRVS_PrintMatches(); BRVS_AttemptAutoBuy(egg) end)
+		BRVS_PerEggConns[egg] = { c1, c2 }
+		BRVS_AttemptAutoBuy(egg)
+	end
+
+	table.insert(BRVS_Conns, BRVS_IslandFolder.ChildAdded:Connect(function(child)
+		local c1 = child:GetAttributeChangedSignal("T"):Connect(function() BRVS_PrintMatches(); BRVS_AttemptAutoBuy(child) end)
+		local c2 = child:GetAttributeChangedSignal("M"):Connect(function() BRVS_PrintMatches(); BRVS_AttemptAutoBuy(child) end)
+		BRVS_PerEggConns[child] = { c1, c2 }
+		BRVS_PrintMatches(); BRVS_AttemptAutoBuy(child)
+	end))
+
+	table.insert(BRVS_Conns, BRVS_IslandFolder.ChildRemoved:Connect(function(child)
+		local b = BRVS_PerEggConns[child]
+		if b then for _, c in ipairs(b) do pcall(function() c:Disconnect() end) end end
+		BRVS_PerEggConns[child] = nil
+		BRVS_PrintMatches()
+	end))
+end
+
+--========================================================
+-- LIVE FOOD STOCK (PlayerGui.Data.FoodStore.LST)
+local BRVS_FoodStock      = {}   -- { [FoodName] = number }
+local BRVS_FoodStockConns = {}
+local BRVS_LST = nil
+
+local function BRVS_DisconnectStock()
+	for _, c in ipairs(BRVS_FoodStockConns) do pcall(function() c:Disconnect() end) end
+	table.clear(BRVS_FoodStockConns)
+end
+
+local function BRVS_SnapshotAttrs(lst)
+	table.clear(BRVS_FoodStock)
+	for k, v in pairs(lst:GetAttributes()) do
+		BRVS_FoodStock[k] = tonumber(v) or 0
+	end
+	for _, child in ipairs(lst:GetChildren()) do
+		if child:IsA("IntValue") or child:IsA("NumberValue") then
+			BRVS_FoodStock[child.Name] = tonumber(child.Value) or 0
+		end
+	end
+end
+
+function BRVS_BindFoodStock()
+	BRVS_DisconnectStock()
+
+	local pg = BRVS_Player:WaitForChild("PlayerGui")
+	local data = pg:WaitForChild("Data")
+	local fs = data:WaitForChild("FoodStore")
+	local lst = fs:WaitForChild("LST")
+	BRVS_LST = lst
+
+	BRVS_SnapshotAttrs(lst)
+
+	table.insert(BRVS_FoodStockConns, lst.AttributeChanged:Connect(function(attr)
+		local val = lst:GetAttribute(attr)
+		BRVS_FoodStock[attr] = tonumber(val) or 0
+	end))
+
+	for _, child in ipairs(lst:GetChildren()) do
+		if child:IsA("IntValue") or child:IsA("NumberValue") then
+			table.insert(BRVS_FoodStockConns, child:GetPropertyChangedSignal("Value"):Connect(function()
+				BRVS_FoodStock[child.Name] = tonumber(child.Value) or 0
+			end))
+		end
+	end
+
+	table.insert(BRVS_FoodStockConns, lst.ChildAdded:Connect(function(child)
+		if child:IsA("IntValue") or child:IsA("NumberValue") then
+			BRVS_FoodStock[child.Name] = tonumber(child.Value) or 0
+			table.insert(BRVS_FoodStockConns, child:GetPropertyChangedSignal("Value"):Connect(function()
+				BRVS_FoodStock[child.Name] = tonumber(child.Value) or 0
+			end))
+		end
+	end))
+
+	return BRVS_LST
+end
+
+local function BRVS_HasFoodStock(name) return (BRVS_FoodStock[name] or 0) > 0 end
+
+--========================================================
+-- INVENTORY: Eggs (PlayerGui.Data.Egg)
+local BRVS_InvEggConns = {}
+local BRVS_InvEggPerItemConns = {}
+local BRVS_InvEggLabel -- set after creating tab
+
+local function BRVS_ClearInvEggConns()
+	for _,c in ipairs(BRVS_InvEggConns) do pcall(function() c:Disconnect() end) end
+	table.clear(BRVS_InvEggConns)
+	for inst, list in pairs(BRVS_InvEggPerItemConns) do
+		for _,c in ipairs(list) do pcall(function() c:Disconnect() end) end
+		BRVS_InvEggPerItemConns[inst] = nil
+	end
+end
+
+local function BRVS_HumanEggName(tVal)
+	local base = tostring(tVal or "Unknown")
+	base = base:gsub("Egg$", "")
+	base = (base:sub(1,1):upper() .. base:sub(2):lower())
+	return base .. " egg"
+end
+
+local function BRVS_RebuildEggInventoryText(eggsFolder)
+	if not BRVS_InvEggLabel then return end
+	if not eggsFolder then
+		BRVS_InvEggLabel:Set("Egg:\n- (none)")
+		return
+	end
+
+	local counts = {}  -- key: T .. "\0" .. (M or "")
+	for _, egg in ipairs(eggsFolder:GetChildren()) do
+		-- Skip eggs marked with D
+		if not egg:GetAttribute("D") then
+			local T = egg:GetAttribute("T")
+			local M = egg:GetAttribute("M")
+			local key = tostring(T or "Unknown") .. "\0" .. tostring(M or "")
+			counts[key] = (counts[key] or 0) + 1
+		end
+	end
+
+	local lines = {}
+	for key, n in pairs(counts) do
+		local T, M = key:match("^(.-)\0(.*)$")
+		local name = BRVS_HumanEggName(T)
+		local line = (M and M ~= "") and string.format("- %s | %s (%d)", name, M, n) or string.format("- %s (%d)", name, n)
+		table.insert(lines, line)
+	end
+	table.sort(lines, function(a,b) return a:lower()<b:lower() end)
+
+	local text = "Egg:"
+	if #lines == 0 then
+		text = text .. "\n- (none)"
+	else
+		for _,ln in ipairs(lines) do text = text .. "\n" .. ln end
+	end
+	BRVS_InvEggLabel:Set(text)
+end
+
+local function BRVS_BindInventoryEggs()
+	BRVS_ClearInvEggConns()
+
+	local pg = BRVS_Player:WaitForChild("PlayerGui")
+	local data = pg:WaitForChild("Data")
+	local eggs = data:WaitForChild("Egg")  -- array of uid nodes with attributes T and optional M
+
+	BRVS_RebuildEggInventoryText(eggs)
+
+	table.insert(BRVS_InvEggConns, eggs.ChildAdded:Connect(function(child)
+		local list = {}
+		table.insert(list, child:GetAttributeChangedSignal("T"):Connect(function() BRVS_RebuildEggInventoryText(eggs) end))
+		table.insert(list, child:GetAttributeChangedSignal("M"):Connect(function() BRVS_RebuildEggInventoryText(eggs) end))
+		table.insert(list, child:GetAttributeChangedSignal("D"):Connect(function() BRVS_RebuildEggInventoryText(eggs) end))
+		BRVS_InvEggPerItemConns[child] = list
+		BRVS_RebuildEggInventoryText(eggs)
+	end))
+	table.insert(BRVS_InvEggConns, eggs.ChildRemoved:Connect(function(child)
+		local list = BRVS_InvEggPerItemConns[child]
+		if list then for _,c in ipairs(list) do pcall(function() c:Disconnect() end) end end
+		BRVS_InvEggPerItemConns[child] = nil
+		BRVS_RebuildEggInventoryText(eggs)
+	end))
+
+	for _, child in ipairs(eggs:GetChildren()) do
+		local list = {}
+		table.insert(list, child:GetAttributeChangedSignal("T"):Connect(function() BRVS_RebuildEggInventoryText(eggs) end))
+		table.insert(list, child:GetAttributeChangedSignal("M"):Connect(function() BRVS_RebuildEggInventoryText(eggs) end))
+		table.insert(list, child:GetAttributeChangedSignal("D"):Connect(function() BRVS_RebuildEggInventoryText(eggs) end))
+		BRVS_InvEggPerItemConns[child] = list
+	end
+end
+
+--========================================================
+-- Rayfield UI (prefixed locals)
+local BRVS_Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local BRVS_Window = BRVS_Rayfield:CreateWindow({
+	Name = "Build A Zoo [SEASON 2] | HrafnHub",
+	Icon = "egg",
+	LoadingTitle = "Loading y0ur stuff",
+	LoadingSubtitle = "by HrafnHub",
+	ShowText = "UI HrafnHub",
+	Theme = "Dark Blue",
+	ToggleUIKeybind = "K",
+	DisableRayfieldPrompts = true,
+	DisableBuildWarnings = true,
+	ConfigurationSaving = {
+		Enabled = true,
+		FolderName = "EggTools",
+		FileName = "EggTools_Config"
+	},
+	Discord = { Enabled = false },
+	KeySystem = false,
+})
+
+-- =================== TAB: Inventory (Paragraph-based) ===================
+local BRVS_InvTab = BRVS_Window:CreateTab("Inventory", "box")
+
+-- Paragraph element for Eggs
+local BRVS_InvEggPara = BRVS_InvTab:CreateParagraph({
+    Title = "Eggs",
+    Content = "loading..."
+})
+
+-- Connections we manage for live updates
+local BRVS_InvEggConns, BRVS_InvEggPerItemConns = {}, {}
+
+local function BRVS_ClearInvEggConns()
+    for _, c in ipairs(BRVS_InvEggConns) do pcall(function() c:Disconnect() end) end
+    BRVS_InvEggConns = {}
+    for inst, list in pairs(BRVS_InvEggPerItemConns) do
+        for _, c in ipairs(list) do pcall(function() c:Disconnect() end) end
+        BRVS_InvEggPerItemConns[inst] = nil
     end
-    return nil
 end
 
-local function BRVS_GetRootCF(root)
-    if not root then return CFrame.new() end
-    if root:IsA("Model") then local ok, cf = pcall(function() return root:GetPivot() end); return ok and cf or CFrame.new()
-    elseif root:IsA("BasePart") then return root.CFrame
-    else local p = root:FindFirstChildWhichIsA("BasePart", true); return p and p.CFrame or CFrame.new() end
+local function BRVS_HumanEggName(tVal)
+    local base = tostring(tVal or "Unknown")
+    base = base:gsub("Egg$", "")
+    if #base > 0 then
+        base = base:sub(1,1):upper() .. base:sub(2):lower()
+    end
+    return base .. " egg"
 end
 
-local function BRVS_GetInstCF(inst)
-    if not inst then return nil end
-    if inst:IsA("Model") then local ok, cf = pcall(function() return inst:GetPivot() end); return ok and cf or nil
-    elseif inst:IsA("BasePart") then return inst.CFrame
-    else local p = inst:FindFirstChildWhichIsA("BasePart", true); return p and p.CFrame or nil end
-end
+local function BRVS_RebuildEggInventoryText(eggsFolder)
+    if not BRVS_InvEggPara then return end
+    if not eggsFolder then
+        BRVS_InvEggPara:Set({ Title = "Eggs", Content = "(none)" })
+        return
+    end
 
-local function BRVS_CollectSortedTilesForMe(pattern)
-    local root, _ = BRVS_GetMyIsland()
-    if not root then warn("[GiftFixed] You don't have a claimed island."); return {} end
-    local rootCF = BRVS_GetRootCF(root)
-    local ROW_TOL = 0.25
-    local tiles = {}
-    for _, ch in ipairs(root:GetChildren()) do
-        if ch.Name:match(pattern) then
-            local cf = BRVS_GetInstCF(ch)
-            if cf then
-                local lp = rootCF:PointToObjectSpace(cf.Position)
-                tiles[#tiles+1] = { inst = ch, wp = cf.Position, lp = lp }
+    -- Tally by (T, M), skipping eggs with attribute D
+	local counts = {}  -- key: T .. "\0" .. (M or "")
+	for _, egg in ipairs(eggsFolder:GetChildren()) do
+		-- Skip eggs marked with D
+		if not egg:GetAttribute("D") then
+			local T = egg:GetAttribute("T")
+			local M = egg:GetAttribute("M")
+			local key = tostring(T or "Unknown") .. "\0" .. tostring(M or "")
+			counts[key] = (counts[key] or 0) + 1
+		end
+	end
+
+
+    -- Build pretty bullet lines
+    local lines = {}
+    for key, n in pairs(counts) do
+        local T, M = key:match("^(.-)\0(.*)$")
+        local name = BRVS_HumanEggName(T)
+        local line
+        if M and M ~= "" then
+            line = string.format("• %s | %s  ×%d", name, M, n)
+        else
+            line = string.format("• %s  ×%d", name, n)
+        end
+        table.insert(lines, line)
+    end
+    table.sort(lines, function(a,b) return a:lower() < b:lower() end)
+
+    local content = ""
+    if #lines == 0 then
+        content = "(none)"
+    else
+        -- join with newlines
+        for i, ln in ipairs(lines) do
+            if i == 1 then
+                content = ln
+            else
+                content = content .. "\n" .. ln
             end
         end
     end
-    table.sort(tiles, function(a,b)
-        if math.abs(a.lp.Z - b.lp.Z) > ROW_TOL then return a.lp.Z < b.lp.Z end
-        if a.lp.X ~= b.lp.X then return a.lp.X < b.lp.X end
-        if a.lp.Y ~= b.lp.Y then return a.lp.Y < b.lp.Y end
-        return a.inst.Name < b.inst.Name
-    end)
-    return tiles
+
+    BRVS_InvEggPara:Set({ Title = "Eggs", Content = content })
 end
 
-local function BRVS_GetFarmTilesForMe() return BRVS_CollectSortedTilesForMe("^Farm_split_(%d+)_(%d+)_(%d+)$") end
-local function BRVS_GetWaterFarmTilesForMe() return BRVS_CollectSortedTilesForMe("^WaterFarm_split_(%d+)_(%d+)_(%d+)$") end
+local function BRVS_BindInventoryEggs()
+    BRVS_ClearInvEggConns()
 
--- ====== State ===============================================================
-local GRID = "Farm"
-local FARM_TILES, WATERFARM_TILES = {}, {}
-local currentIndex = 0
-local stepDelay = 0.25
+    local pg   = BRVS_Player:WaitForChild("PlayerGui")
+    local data = pg:WaitForChild("Data")
+    local eggs = data:WaitForChild("Egg") -- array of uid instances with attributes T, optional M
 
-local function refreshTiles()
-    FARM_TILES = BRVS_GetFarmTilesForMe()
-    WATERFARM_TILES = BRVS_GetWaterFarmTilesForMe()
-    dprint("Tiles refreshed. Farm:", #FARM_TILES, "WaterFarm:", #WATERFARM_TILES)
-end
-local function getActiveTiles() return (GRID == "Farm") and FARM_TILES or WATERFARM_TILES end
-local function getIslandIndex() local _, idx = BRVS_GetMyIsland(); return idx end
+    BRVS_RebuildEggInventoryText(eggs)
 
-local function tpTo(pos, yOffset)
-    yOffset = yOffset or 4
-    local char = LocalPlayer.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if hrp then hrp.CFrame = CFrame.new(pos + Vector3.new(0, yOffset, 0)) end
-end
+    -- React to adds/removes
+    table.insert(BRVS_InvEggConns, eggs.ChildAdded:Connect(function(child)
+        local list = {}
+        table.insert(list, child:GetAttributeChangedSignal("T"):Connect(function()
+            BRVS_RebuildEggInventoryText(eggs)
+        end))
+        table.insert(list, child:GetAttributeChangedSignal("M"):Connect(function()
+            BRVS_RebuildEggInventoryText(eggs)
+        end))
+		table.insert(list, child:GetAttributeChangedSignal("D"):Connect(function()
+			BRVS_RebuildEggInventoryText(eggs)
+		end))
+        BRVS_InvEggPerItemConns[child] = list
+        BRVS_RebuildEggInventoryText(eggs)
+    end))
 
-local function interactWith(tile)
-    local prompt = tile.inst:FindFirstChildOfClass("ProximityPrompt") or tile.inst:FindFirstChildWhichIsA("ProximityPrompt", true)
-    if prompt and fireproximityprompt then
-        local old = prompt.HoldDuration; prompt.HoldDuration = 0
-        pcall(fireproximityprompt, prompt)
-        prompt.HoldDuration = old
-        return
+    table.insert(BRVS_InvEggConns, eggs.ChildRemoved:Connect(function(child)
+        local list = BRVS_InvEggPerItemConns[child]
+        if list then
+            for _, c in ipairs(list) do pcall(function() c:Disconnect() end) end
+        end
+        BRVS_InvEggPerItemConns[child] = nil
+        BRVS_RebuildEggInventoryText(eggs)
+    end))
+
+    -- Hook existing items for attribute changes
+    for _, child in ipairs(eggs:GetChildren()) do
+        local list = {}
+        table.insert(list, child:GetAttributeChangedSignal("T"):Connect(function()
+            BRVS_RebuildEggInventoryText(eggs)
+        end))
+        table.insert(list, child:GetAttributeChangedSignal("M"):Connect(function()
+            BRVS_RebuildEggInventoryText(eggs)
+        end))
+		table.insert(list, child:GetAttributeChangedSignal("D"):Connect(function()
+			BRVS_RebuildEggInventoryText(eggs)
+		end))
+        BRVS_InvEggPerItemConns[child] = list
     end
-    if tile.wp then tpTo(tile.wp) end
 end
 
--- ====== Window & base panels ===============================================
-WindUI:SetTheme("Sky")
-WindUI.TransparencyValue = 0.15
-local Window = WindUI:CreateWindow({
-    Title = "Utils Farm (Merged)", Icon = "sprout", Author = "Your Island Helper",
-    Folder = "UtilsFarm_WindUI", Size = UDim2.fromOffset(740, 520), Theme = "Sky",
-    HidePanelBackground = false, NewElements = false,
+-- Paragraph element for Food (placed before Eggs)
+local BRVS_InvFoodPara = BRVS_InvTab:CreateParagraph({
+    Title = "Food",
+    Content = "loading..."
 })
 
-Window:CreateTopbarButton("theme", "moon", function()
-    WindUI:SetTheme(WindUI:GetCurrentTheme() == "Sky" and "Light" or "Sky")
-    WindUI:Notify({ Title = "Theme", Content = "Current: "..WindUI:GetCurrentTheme(), Duration = 2 })
-end, 999)
-
-local Sections = {
-    Main     = Window:Section({ Title = "Main", Opened = true }),
-    Origin   = Window:Section({ Title = "Auto", Opened = true }),
-    Settings = Window:Section({ Title = "Settings", Opened = true }),
-}
-
-local Tabs = {
-    Inv    = Sections.Main:Tab({ Title = "Inventory", Icon = "archive" }),
-    Gift   = Sections.Origin:Tab({ Title = "Auto Gift", Icon = "gift" }),
-    Util   = Sections.Origin:Tab({ Title = "Auto Fish", Icon = "fish" }),
-    Buy    = Sections.Origin:Tab({ Title = "Auto Buy", Icon = "shopping-cart" }),
-    Collect= Sections.Origin:Tab({ Title = "Auto Collect", Icon = "recycle" }),
-    Place  = Sections.Origin:Tab({ Title = "Auto Place Egg", Icon = "map-pin" }),
-    PlacePet = Sections.Origin:Tab({ Title = "Auto Place Pet", Icon = "cat" }),
-    App    = Sections.Settings:Tab({ Title = "Appearance", Icon = "brush" }),
-}
-
--- Appearance
-local themes = {}
-if WindUI.GetThemes then for themeName,_ in pairs(WindUI:GetThemes()) do table.insert(themes, themeName) end else themes = { "Dark", "Light" } end
- table.sort(themes)
-Tabs.App:Dropdown({ Title = "Theme", Values = themes, Value = WindUI.GetCurrentTheme and WindUI:GetCurrentTheme() or themes[1], Callback = function(theme)
-    if WindUI.SetTheme then WindUI:SetTheme(theme) end
-end })
-Tabs.App:Slider({ Title = "Window Transparency", Value = { Min = 0, Max = 1, Default = WindUI.TransparencyValue or 0 }, Step = 0.05, Callback = function(v)
-    WindUI.TransparencyValue = tonumber(v) or 0
-    if Window.ToggleTransparency then Window:ToggleTransparency((tonumber(v) or 0) > 0) end
-end })
-
--- ====== Exact Remotes: CharacterRE / FoodStoreRE ===========================
-local CharacterRE -- cached after first use
-local FoodStoreRE
-local function CharacterRE_Fire(...)
-    if not CharacterRE then
-        local R = ReplicatedStorage:FindFirstChild("Remote")
-        CharacterRE = R and R:FindFirstChild("CharacterRE")
-        if not CharacterRE then warn("[GiftFixed] CharacterRE missing (ReplicatedStorage.Remote.CharacterRE)"); return false end
-    end
-    local args = { ... }
-    local ok, err = pcall(function()
-        CharacterRE:FireServer(table.unpack(args))
-    end)
-    return ok, err
-end
-local function FoodStoreRE_Fire(...)
-    if not FoodStoreRE then
-        local R = ReplicatedStorage:FindFirstChild("Remote")
-        FoodStoreRE = R and R:FindFirstChild("FoodStoreRE")
-        if not FoodStoreRE then warn("[GiftFixed] FoodStoreRE missing (ReplicatedStorage.Remote.FoodStoreRE)"); return false end
-    end
-    local args = { ... }
-    local ok, err = pcall(function()
-        FoodStoreRE:FireServer(table.unpack(args))
-    end)
-    return ok, err
+-- Connections we manage for Food paragraph updates
+local BRVS_InvFoodConns = {}
+local function BRVS_ClearInvFoodConns()
+    for _, c in ipairs(BRVS_InvFoodConns) do pcall(function() c:Disconnect() end) end
+    BRVS_InvFoodConns = {}
 end
 
--- ====== Generic Remote helpers ============================================
-local function getRemote(path)
-    -- path can be string (name under ReplicatedStorage.Remote) or array {"Remote","Name"}
-    local root = ReplicatedStorage
-    if type(path) == "table" then
-        local node = root
-        for _,name in ipairs(path) do
-            node = node and node:FindFirstChild(name)
+local function BRVS_RebuildFoodText(assetInst)
+    if not BRVS_InvFoodPara then return end
+    if not assetInst then
+        BRVS_InvFoodPara:Set({ Title = "Food", Content = "(none)" })
+        return
+    end
+
+    local lines = {}
+    for _, name in ipairs(BRVS_FOOD_OPTIONS) do
+        local v = assetInst:GetAttribute(name)
+        if v ~= nil and v ~= false and v ~= 0 then
+            -- If numeric and >0, show a count; otherwise just show the name
+            if type(v) == "number" then
+                if v > 0 then
+                    table.insert(lines, string.format("• %s  ×%d", name, v))
+                end
+            else
+                table.insert(lines, string.format("• %s", name))
+            end
         end
-        return node
-    else
-        local R = root:FindFirstChild("Remote")
-        return R and R:FindFirstChild(path)
+    end
+
+    table.sort(lines, function(a, b) return a:lower() < b:lower() end)
+    BRVS_InvFoodPara:Set({
+        Title = "Food",
+        Content = (#lines == 0) and "(none)" or table.concat(lines, "\n")
+    })
+end
+
+local function BRVS_BindInventoryFood()
+    BRVS_ClearInvFoodConns()
+
+    -- Resolve Players.LocalPlayer.PlayerGui.Data.Asset
+    local pg = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+    local data = pg:WaitForChild("Data")
+    local asset = data:WaitForChild("Asset") -- attributes live here
+
+    -- Initial render
+    BRVS_RebuildFoodText(asset)
+
+    -- Listen for changes on each food attribute we care about
+    for _, name in ipairs(BRVS_FOOD_OPTIONS) do
+        table.insert(BRVS_InvFoodConns, asset:GetAttributeChangedSignal(name):Connect(function()
+            BRVS_RebuildFoodText(asset)
+        end))
     end
 end
 
-local function safeFire2(remote, ...)
-    if not remote then return false, "remote nil" end
-    local args = { ... }
-    local ok, err = pcall(function()
-        remote:FireServer(table.unpack(args))
-    end)
-    if not ok then warn("[safeFire2]", (remote and remote.Name) or "?", err) end
-    return ok, err
+-- call once on init (after window creation)
+-- BRVS_BindInventoryEggs()
+
+-- =================== TAB: Auto Buy ===================
+local BRVS_AutoTab = BRVS_Window:CreateTab("Automation", "rotate-cw")
+local BRVS_IslandLabel = BRVS_AutoTab:CreateLabel(BRVS_IslandName and ("Island: "..BRVS_IslandName) or "Island: (none)")
+local BRVS_EggFilterPara = BRVS_AutoTab:CreateParagraph({
+    Title   = "Egg Buy Filter",
+    Content = "Names: Any\nMutations: Any"
+})
+
+local function _fmtList(list)
+    if not list or #list == 0 then return "Any" end
+    for _, v in ipairs(list) do if v == "Any" then return "Any" end end
+    return table.concat(list, ", ")
 end
 
--- === Auto Recall helper (maps to your getRemote / CharacterRE) ===
+local function BRVS_UpdateEggFilterPara()
+    if not BRVS_EggFilterPara then return end
+    local namesTxt = _fmtList(BRVS_SelEggNames)
+    local mutsTxt  = _fmtList(BRVS_SelMutations)
+    BRVS_EggFilterPara:Set({
+        Title   = "Egg Buy Filter",
+        Content = ("Names: %s\nMutations: %s"):format(namesTxt, mutsTxt)
+    })
+end
+
+BRVS_AutoTab:CreateSection("Auto Buy Egg")
+local BRVS_EggDD = BRVS_AutoTab:CreateDropdown({
+	Name = "Name(s)",
+	Options = BRVS_EGG_OPTIONS,
+	CurrentOption = {},
+	MultipleOptions = true,
+	Flag = "EggNames",
+	Callback = function(options)
+		BRVS_SelEggNames = options or {}
+		BRVS_PrintMatches()
+		BRVS_RescanAutoBuy()
+		BRVS_UpdateEggFilterPara()
+	end,
+})
+local BRVS_MutDD = BRVS_AutoTab:CreateDropdown({
+	Name = "Mutation(s)",
+	Options = BRVS_MUTATION_OPTIONS,
+	CurrentOption = {},
+	MultipleOptions = true,
+	Flag = "Mutations",
+	Callback = function(options)
+		BRVS_SelMutations = options or {}
+		BRVS_PrintMatches()
+		BRVS_RescanAutoBuy()
+		BRVS_UpdateEggFilterPara()
+	end,
+})
+local BRVS_AutoBuyToggle = BRVS_AutoTab:CreateToggle({
+	Name = "Auto Buy Eggs",
+	CurrentValue = false,
+	Flag = "AutoBuy",
+	Callback = function(on)
+		BRVS_AutoBuyEnabled = on
+		if BRVS_AutoBuyEnabled then
+			BRVS_RescanAutoBuy()
+			BRVS_Rayfield:Notify({ Title = "Auto Buy", Content = "Enabled", Duration = 4, Image = "shopping-bag" })
+		else
+			BRVS_Rayfield:Notify({ Title = "Auto Buy", Content = "Disabled", Duration = 3, Image = "ban" })
+		end
+	end,
+})
+
+BRVS_AutoTab:CreateSection("Auto Buy Food")
+local BRVS_FoodSelPara = BRVS_AutoTab:CreateParagraph({
+    Title   = "Food Buy Selection",
+    Content = "(none)"
+})
+
+local function BRVS_UpdateFoodSelPara()
+    if not BRVS_FoodSelPara then return end
+    local foods = BRVS_SelectedFood or {}
+    local text = (#foods == 0) and "(none)" or table.concat(foods, ", ")
+    BRVS_FoodSelPara:Set({
+        Title   = "Food Buy Selection",
+        Content = text
+    })
+end
+
+-- Food multi-select
+local BRVS_FoodDD = BRVS_AutoTab:CreateDropdown({
+	Name = "Food (multi-select)",
+	Options = BRVS_FOOD_OPTIONS,
+	CurrentOption = {},
+	MultipleOptions = true,
+	Flag = "FoodSelect",
+	Callback = function(options)
+		BRVS_SelectedFood = options or {}
+		BRVS_UpdateFoodSelPara()
+	end,
+})
+
+-- Auto Buy Food toggle (uses LIVE STOCK, fixed 0.2s tick)
+local BRVS_AutoBuyFoodToggle = BRVS_AutoTab:CreateToggle({
+	Name = "Auto Buy Food",
+	CurrentValue = false,
+	Flag = "AutoBuyFood",
+	Callback = function(on)
+		BRVS_FoodBuyEnabled = on
+		BRVS_FoodBuyThread = nil
+		if not BRVS_FoodBuyEnabled then
+			BRVS_Rayfield:Notify({ Title = "Food Store", Content = "Auto Buy Food: OFF", Duration = 2.5, Image = "ban" })
+			return
+		end
+		BRVS_FoodBuyThread = task.spawn(function()
+			BRVS_Rayfield:Notify({ Title = "Food Store", Content = "Auto Buy Food: ON", Duration = 2.5, Image = "shopping-cart" })
+			while BRVS_FoodBuyEnabled do
+				local foods = (BRVS_SelectedFood and #BRVS_SelectedFood > 0) and BRVS_SelectedFood or {}
+				local remote = BRVS_GetRemote(BRVS_FOOD_REMOTE_PATH)
+				if #foods > 0 and remote and remote:IsA("RemoteEvent") then
+					for _, item in ipairs(foods) do
+						if not BRVS_FoodBuyEnabled then break end
+						if BRVS_HasFoodStock(item) then
+							remote:FireServer(item)
+							task.wait(0.05)
+						end
+					end
+				end
+				task.wait(BRVS_FoodBuyInterval) -- fixed 0.2s tick
+			end
+		end)
+	end,
+})
+
+BRVS_AutoTab:CreateSection("Auto Collect Pet")
+local BRVS_PetDelaySlider = BRVS_AutoTab:CreateSlider({
+	Name = "Pet Delay",
+	Range = {1, 60},
+	Increment = 1,
+	Suffix = "sec",
+	CurrentValue = BRVS_PetCollectInterval,
+	Flag = "PetCollectDelay",
+	Callback = function(val)
+		BRVS_PetCollectInterval = tonumber(val) or BRVS_PetCollectInterval
+	end,
+})
+
+-- Pet claimer using PlayerGui.Data.Pets → UIDs
+-- Optimized, rate-limited pet claimer (safe for your own pets)
+local function BRVS_ClaimMyPetsOnce(ratePerSec)
+	ratePerSec = math.max(1, tonumber(ratePerSec) or 15) -- default: 15 claims/sec
+	local interval = 1 / ratePerSec
+
+	-- === Step 0: Find required nodes ===
+	local pg = BRVS_Player:FindFirstChildOfClass("PlayerGui"); if not pg then return end
+	local data = pg:FindFirstChild("Data"); if not data then return end
+	local petsNode = data:FindFirstChild("Pets"); if not petsNode then return end
+	local workspacePets = BRVS_Workspace:FindFirstChild("Pets"); if not workspacePets then return end
+
+	-- === Step 1: Collect owned pet UIDs (deduped) ===
+	local owned = {}
+	for _, obj in ipairs(petsNode:GetChildren()) do
+		local uid = (obj:IsA("StringValue") and obj.Value ~= "" and obj.Value) or obj.Name
+		if type(uid) == "string" and uid ~= "" then
+			owned[uid] = true
+		end
+	end
+	if not next(owned) then return end
+
+	-- === Step 2: Index workspace pets (UID → RemoteEvent) ===
+	local reByUID = {}
+	for _, model in ipairs(workspacePets:GetChildren()) do
+		if model:IsA("Model") then
+			local root = model:FindFirstChild("RootPart")
+			local re = root and root:FindFirstChild("RE")
+			if re and re.FireServer then
+				reByUID[model.Name] = re
+			end
+		end
+	end
+
+	-- === Helper: Rate-limited RemoteEvent firing ===
+	local function firePaced(queue)
+		local nextTime = os.clock()
+		for i = 1, #queue do
+			local re = queue[i]
+			if re and re.FireServer then
+				local now = os.clock()
+				if now < nextTime then
+					task.wait(nextTime - now)
+				end
+				re:FireServer("Claim")
+				nextTime = nextTime + interval
+			end
+		end
+	end
+
+	-- === Step 3: Claim pets that exist now ===
+	local queue = {}
+	for uid in pairs(owned) do
+		local re = reByUID[uid]
+		if re then
+			queue[#queue+1] = re
+		end
+	end
+	if #queue > 0 then
+		firePaced(queue)
+	end
+
+	-- === Step 4: Short retry window for late-loaded pets ===
+	local missing = {}
+	for uid in pairs(owned) do
+		if not reByUID[uid] then
+			missing[#missing+1] = uid
+		end
+	end
+	if #missing > 0 then
+		task.wait(0.2) -- wait 200ms for late replication
+		local retryQueue = {}
+		for _, uid in ipairs(missing) do
+			local model = workspacePets:FindFirstChild(uid)
+			if model and model:IsA("Model") then
+				local root = model:FindFirstChild("RootPart")
+				local re = root and root:FindFirstChild("RE")
+				if re and re.FireServer then
+					retryQueue[#retryQueue+1] = re
+				end
+			end
+		end
+		if #retryQueue > 0 then
+			firePaced(retryQueue)
+		end
+	end
+end
+
+
+local BRVS_PetToggle = BRVS_AutoTab:CreateToggle({
+	Name = "Auto Collect Pet",
+	CurrentValue = false,
+	Flag = "PetCollectToggle",
+	Callback = function(on)
+		BRVS_PetCollectEnabled = on
+		BRVS_PetCollectThread = nil
+		if not BRVS_PetCollectEnabled then return end
+		BRVS_PetCollectThread = task.spawn(function()
+			while BRVS_PetCollectEnabled do
+				BRVS_ClaimMyPetsOnce()
+				local t = math.max(0.1, BRVS_PetDelaySlider.CurrentValue or BRVS_PetCollectInterval or 3)
+				local elapsed = 0
+				while BRVS_PetCollectEnabled and elapsed < t do
+					task.wait(0.1); elapsed = elapsed + 0.1
+				end
+			end
+		end)
+	end,
+})
+-- ====== Auto-Fishing (NEW: FX_Fish_Special-based, fixed spot) =================
+-- Put this near your other fishing config values:
+-- remotes
+local RS = game:GetService("ReplicatedStorage")
+local CharacterRE = RS:WaitForChild("Remote"):WaitForChild("CharacterRE")
+local FishingRE   = RS:WaitForChild("Remote"):WaitForChild("FishingRE")
+local ResourceRE  = RS:WaitForChild("Remote"):WaitForChild("ResourceRE")
+local FISH_CFRAME = CFrame.new(
+    -534.689209, 16.9160748, 206.973068,
+    -0.999972939, 4.14041921e-08, 0.00735867722,
+     4.164934e-08, 1, 3.31608945e-08,
+    -0.00735867722, 3.34664811e-08, -0.999972939
+)
+local THROW_POS = Vector3.new(-534.799560546875, 11, 231.97265625)
+
+local BRVS_FishBait = BRVS_FishBait or "FishingBait3" -- reuse your bait var if set elsewhere
+local dFocus, dThrow, dPull = 0.4, 1.0, 0.50
+
+-- Small helpers
+local function HRP()
+    local c = BRVS_Player.Character
+    return c and c:FindFirstChild("HumanoidRootPart") or nil
+end
+
+local function ensureSpot()
+    local p = HRP()
+    if not p then
+        if BRVS_Rayfield then BRVS_Rayfield:Notify({Title="Auto Fish", Content="Waiting for character…", Duration=0.5}) end
+        return false
+    end
+    local dist = (p.Position - FISH_CFRAME.Position).Magnitude
+    local dirDelta = (p.CFrame.LookVector - FISH_CFRAME.LookVector).Magnitude
+    if dist > 0.1 or dirDelta > 1e-3 then
+        p.AssemblyLinearVelocity = Vector3.zero
+        p.CFrame = FISH_CFRAME
+        task.wait(0.5)
+    end
+    return true
+end
+
+-- New: only fish when FX_Fish_Special is present under any FishPoint
+local function BRVS_IsFishingActive()
+    local fishPoint = workspace:FindFirstChild("FishPoints")
+    if not fishPoint then return false end
+    for _, fp in ipairs(fishPoint:GetChildren()) do
+        if fp:FindFirstChild("FX_Fish_Special", true) then
+            return true
+        end
+    end
+    return false
+end
+
+-- One fishing cycle (focus -> throw -> pull/pout)
+local function BRVS_OneFishCycle()
+    if not BRVS_IsFishingActive() then
+        -- if BRVS_Rayfield then BRVS_Rayfield:Notify({Title="Auto Fish", Content="Fishing not active", Duration=0.5}) end
+        task.wait(0.8)
+        return
+    end
+
+    if not ensureSpot() then return end
+
+    -- Focus the rod a few times
+    for i = 1, 3 do
+        CharacterRE:FireServer("Focus", "FishRob")
+        task.wait(dFocus)
+    end
+
+    -- Throw with selected/new bait
+    FishingRE:FireServer("Throw", { Bait = BRVS_FishBait, Pos = THROW_POS })
+    task.wait(dThrow)
+
+    -- (Optional) nudge the PULL effect once if your game expects it; harmless if not needed
+    pcall(function() ResourceRE:FireServer("PULL", "FX/FX_Fish") end)
+
+    -- Rapid “POUT” confirms to secure the catch
+    for i = 1, 10 do
+        FishingRE:FireServer("POUT", { SUC = 1 })
+        task.wait(dPull)
+    end
+end
+
+-- ================== Toggle wiring (replaces old StartAutoFish loop) ==========
+-- Remove/disable the old BRVS_StartAutoFish() thread and reuse your existing
+-- "Auto Fish" toggle to run the new method in a tight loop:
+BRVS_AutoTab:CreateSection("Auto Fish")
+BRVS_AutoTab:CreateToggle({
+    Name = "Auto Fish (new method)",
+    CurrentValue = false,
+    Flag = "AutoFish_New",
+    Callback = function(on)
+        BRVS_FishEnabled = on
+        if on then
+            if BRVS_Rayfield then BRVS_Rayfield:Notify({ Title="Auto Fish", Content="Enabled (new)", Duration=0.5, Image="fish"}) end
+            task.spawn(function()
+                while BRVS_FishEnabled do
+                    BRVS_OneFishCycle()
+                    task.wait(0.3)
+                end
+            end)
+        else
+            if BRVS_Rayfield then BRVS_Rayfield:Notify({ Title="Auto Fish", Content="Disabled", Duration=0.5, Image="ban"}) end
+        end
+    end
+})
+
+-- =================== Util: Auto Recall ===================
+-- CharacterRE getter (kept)
 local function BRVS_GetCharacterRE()
-    if CharacterRE and typeof(CharacterRE.FireServer) == "function" then return CharacterRE end
-    return getRemote({"Remote","CharacterRE"})
+    if BRVS_GetRemote then
+        return BRVS_GetRemote({ "Remote", "CharacterRE" })
+    end
+    local rs = game:GetService("ReplicatedStorage")
+    local r  = rs:FindFirstChild("Remote")
+    local re = r and r:FindFirstChild("CharacterRE")
+    return (re and re:IsA("RemoteEvent")) and re or nil
 end
 
--- Recall all pets in PlayerGui.Data.Pets that HAVE D (present/truthy) and do NOT have BPV
+-- One-shot recall: recall all PlayerGui.Data.Pets[uid] that
+-- (1) HAVE a D attribute (truthy/present) AND
+-- (2) DO NOT have a BPV attribute
 local function BRVS_RecallAll_ExcludeBPV_RequireD_PG()
     local re = BRVS_GetCharacterRE()
     if not (re and re:IsA("RemoteEvent")) then return end
@@ -238,821 +1172,45 @@ local function BRVS_RecallAll_ExcludeBPV_RequireD_PG()
     local pets = data and data:FindFirstChild("Pets")
     if not pets then return end
 
+    local function toNum(x)
+        if typeof(x) == "number" then return x end
+        if typeof(x) == "string" then return tonumber(x) end
+        return nil
+    end
     local function hasTruthyD(obj)
         local d = obj:GetAttribute("D")
+        -- treat any non-nil truthy/1/"1"/"true" as present/true
         if d == nil then return false end
         if typeof(d) == "boolean" then return d end
         if typeof(d) == "number" then return d ~= 0 end
-        if typeof(d) == "string" then d = d:lower(); return d == "1" or d == "true" end
-        return true
+        if typeof(d) == "string" then return d:lower() == "1" or d:lower() == "true" end
+        return true -- attribute exists, count as present
     end
 
+    local sent = 0
     for _, child in ipairs(pets:GetChildren()) do
         local uid = child.Name
-        if uid and #uid > 0 then
-            local bpv = child:GetAttribute("BPV")
+        if typeof(uid) == "string" and #uid > 0 then
+            local bpv = toNum(child:GetAttribute("BPV"))
             if hasTruthyD(child) and (bpv == nil) then
                 re:FireServer("Del", uid)
+                sent = sent + 1
+                -- if sent % 10 == 0 then task.wait(0.05) end
                 task.wait(0.1)
             end
         end
     end
 end
 
--- ====== UI helper: status paragraph factory ================================
-local function statusParagraph(tab, title, icon)
-    local p = tab:Paragraph({ Title = title, Desc = "Idle", Image = icon or "info", ImageSize = 18 })
-    return function(text) SetPara(p, text or "") end, p
-end
--- Status paragraph for Auto Place Egg tab
-local setPlaceEggStatus = (function()
-    local setFn = select(1, statusParagraph(Tabs.Place, "Auto Place (Eggs)", "map-pin"))
-    return setFn or function() end
-end)()
-
--- ====== Scan eggs options (for placing UI only) ======
-local function ScanEggOptions()
-    local namesSet, mutsSet = {}, {}
-    local eggsFolder = LocalPlayer:FindFirstChild("PlayerGui")
-        and LocalPlayer.PlayerGui:FindFirstChild("Data")
-        and LocalPlayer.PlayerGui.Data:FindFirstChild("Egg")
-    if eggsFolder then
-        for _, egg in ipairs(eggsFolder:GetChildren()) do
-            -- skip deployed (D present) and BPV
-            if not egg:GetAttribute("D") and not egg:GetAttribute("BPV") then
-                local T = egg:GetAttribute("T")
-                if T then namesSet[T] = true end
-                local M = egg:GetAttribute("M")
-                if M ~= nil then mutsSet[tostring(M)] = true end
-            end
-        end
-    end
-    local names, muts = {}, { "Any" }
-    for k in pairs(namesSet) do table.insert(names, k) end
-    for k in pairs(mutsSet) do table.insert(muts, k) end
-    table.sort(names); table.sort(muts)
-    if #names == 0 then table.insert(names, "Any") end
-    if #muts == 0 then muts = { "Any" } end
-    return names, muts
-end
-local eggNames, eggMuts = ScanEggOptions()
-
--- ====== Find egg UID with optional mutation (for placing) ===================
-local function FindEggUID(eggName, eggMutation)
-    local eggsFolder = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("Data") and LocalPlayer.PlayerGui.Data:FindFirstChild("Egg")
-    if not eggsFolder then dprint("Eggs folder missing"); return nil end
-    local withM, noM = {}, {}
-    for _, egg in ipairs(eggsFolder:GetChildren()) do
-        if not egg:GetAttribute("D") and not egg:GetAttribute("BPV") then
-            local T = egg:GetAttribute("T")
-            if (eggName=="Any" or not eggName or T==eggName) then
-                local M = egg:GetAttribute("M")
-                if M ~= nil then
-                    if eggMutation=="Any" or eggMutation==nil or tostring(M)==tostring(eggMutation) then table.insert(withM, egg) end
-                else table.insert(noM, egg) end
-            end
-        end
-    end
-    local chosen = (eggMutation and eggMutation~="Any") and (withM[1] or noM[1]) or (noM[1] or withM[1])
-    return chosen and chosen.Name or nil
-end
-
--- ====== Focus / Place / Unfocus ============================================
-local function BuildDSTVector(pos) return Vector3.new(pos.X, pos.Y+4, pos.Z) end
-local function FocusEgg(uid) if uid then CharacterRE_Fire("Focus", uid) end end
-local function PlaceEgg(uid, worldPos) CharacterRE_Fire("Place", { DST = BuildDSTVector(worldPos), ID = uid }) end
-local function Unfocus() CharacterRE_Fire("Focus") end
-local function ClearHand() Unfocus() end
-
--- ====== Auto Place loop (reset on enable) ===================================
-local function NextPlacementPosition(gridName)
-    local tiles = (gridName == "WaterFarm") and WATERFARM_TILES or FARM_TILES
-    if #tiles == 0 then return nil end
-    local key = gridName.."_egg_idx"
-    _G[key] = ((_G[key] or 0) % #tiles) + 1
-    local t = tiles[_G[key]]
-    return t and t.wp or nil, _G[key], #tiles
-end
-
-local runningEggFarm = { Farm=false, WaterFarm=false }
-local eggDelay = 0.5
-local function AutoPlaceEggs(gridName, getEggNameFn, getMutationFn)
-    if runningEggFarm[gridName] then return end
-    runningEggFarm[gridName] = true
-    task.spawn(function()
-        local cycle = 0
-        while runningEggFarm[gridName] do
-            cycle = cycle + 1
-            if cycle % 20 == 0 then refreshTiles() end
-            local pos, idx, total = NextPlacementPosition(gridName)
-            if not pos then setPlaceEggStatus("No tiles found for " .. gridName); task.wait(0.75)
-            else
-                local uid = FindEggUID(getEggNameFn(), getMutationFn())
-                if uid then FocusEgg(uid); PlaceEgg(uid, pos); Unfocus() end
-                setPlaceEggStatus(("%s eggs: placed at slot %d/%d"):format(gridName, idx or 0, total or 0))
-                task.wait(eggDelay)
-            end
-        end
-        setPlaceEggStatus("Idle")
-    end)
-end
-
--- ====== UID Resolver for Auto Buy ===========================================
--- Resolve UID from ReplicatedStorage.Eggs.Island_N by matching T (egg name) and M (mutation filter)
-local function ResolveEggUID(eggName, mutFilter)
-    -- Normalize in case UI passed tables
-    if type(eggName) == "table" then eggName = eggName[1] end
-    if type(mutFilter) == "table" then mutFilter = mutFilter[1] end
-
-    local EggsRoot = ReplicatedStorage:FindFirstChild("Eggs")
-    if not EggsRoot then return eggName end
-
-    local wantName = (eggName and eggName ~= "" and eggName ~= "Any") and eggName or nil
-    local wantMut  = (mutFilter and mutFilter ~= "" and mutFilter ~= "Any" and mutFilter ~= "None") and tostring(mutFilter) or nil
-    local wantNone = (mutFilter == "None")
-
-    local function scanIslandFolder(islandFolder)
-        if not islandFolder or not islandFolder.GetChildren then return nil end
-        for _, cfg in ipairs(islandFolder:GetChildren()) do
-            local okT, T      = pcall(function() return cfg:GetAttribute("T") end)
-            local okM, M      = pcall(function() return cfg:GetAttribute("M") end)
-            local okU, UIDAtt = pcall(function() return cfg:GetAttribute("UID") end)
-            local uid = (okU and UIDAtt and tostring(UIDAtt)) or cfg.Name
-
-            if (not wantName or (okT and T == wantName)) then
-                if wantNone then
-                    if (not okM) or (M == nil) then return uid end
-                else
-                    if (not wantMut) or (okM and tostring(M) == wantMut) then return uid end
-                end
-            end
-        end
-        return nil
-    end
-
-    local myIdx = getIslandIndex()
-    if myIdx then
-        local uid = scanIslandFolder(EggsRoot:FindFirstChild("Island_"..tostring(myIdx)))
-        if uid then return uid end
-    end
-    for _, island in ipairs(EggsRoot:GetChildren()) do
-        if island.Name:match("^Island_%d+$") then
-            local uid = scanIslandFolder(island)
-            if uid then return uid end
-        end
-    end
-    return eggName
-end
-
--- ====== Auto Buy (Eggs & Food) =============================================
--- Helpers to pretty-print selected lists and update paragraphs
-local function _fmtList(v)
-    if typeof(v) ~= "table" then
-        v = (v == nil or v == "") and {} or { v }
-    end
-    -- Filter out empty strings just in case
-    local clean = {}
-    for _, item in ipairs(v) do
-        if item and tostring(item) ~= "" then
-            table.insert(clean, tostring(item))
-        end
-    end
-    if #clean == 0 then return "- None" end
-    return table.concat(clean, ", ")
-end
-
-local AutoBuyEggs = { enabled=false, cooldown=1, lastAt=0, names={""}, mutation="None" }
-local AutoBuyFood = { enabled=false, items={}, interval=1 }
-
-local function TryBuyEggOnce(eggName)
-    if type(eggName) == "table" then eggName = eggName[1] end
-    if not eggName or eggName == "" then return false end
-    local uid = ResolveEggUID(eggName, AutoBuyEggs and AutoBuyEggs.mutation or nil)
-    if not uid or uid == "" then return false end
-    local ok = CharacterRE_Fire("BuyEgg", uid)
-    return ok and true or false
-end
-
-local function TryBuyFoodOnce(foodName)
-    local assetData = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("Data") and LocalPlayer.PlayerGui.Data:FindFirstChild("Asset")
-    if assetData then
-        local lstValue = assetData:GetAttribute("LST") or 0
-        if lstValue == 0 then dprint("[Guard] LST=0, skip food:", foodName); return false end
-    end
-    return FoodStoreRE_Fire(foodName, 1)
-end
-
-local function AutoBuyEggsLoop()
-    task.spawn(function()
-        while AutoBuyEggs.enabled do
-            local now = os.clock()
-            if now - (AutoBuyEggs.lastAt or 0) >= AutoBuyEggs.cooldown then
-                AutoBuyEggs.lastAt = now
-                local list = AutoBuyEggs.names
-                if typeof(list) ~= "table" then list = { list } end
-                for _, name in ipairs(list) do
-                    TryBuyEggOnce(name)
-                    task.wait(0.05)
-                end
-            end
-            task.wait(0.1)
-        end
-    end)
-end
-local function AutoBuyFoodLoop()
-    task.spawn(function()
-        while AutoBuyFood.enabled do
-            for _, itm in ipairs(AutoBuyFood.items) do TryBuyFoodOnce(itm); task.wait(AutoBuyFood.interval) end
-            task.wait(0.1)
-        end
-    end)
-end
-
--- ========== Auto Collect (UID-based from Data.Pets) ==========
-local Collector = { enabled=false, interval=60.0 }  -- default 60s
-
-local function ClaimPetUID(uid)
-    uid = tostring(uid or "")
-    if #uid == 0 then return false, "empty uid" end
-
-    local petsRoot = workspace:FindFirstChild("Pets")
-    if not petsRoot then return false, "workspace.Pets missing" end
-
-    local petModel = petsRoot:FindFirstChild(uid)
-    if not petModel then return false, "uid not found under workspace.Pets" end
-
-    local rootPart = petModel:FindFirstChild("RootPart")
-    if not rootPart then return false, "RootPart missing" end
-
-    local re = rootPart:FindFirstChild("RE")
-    if not re then return false, "RE missing" end
-
-    local ok, err = pcall(function()
-        re:FireServer("Claim")  -- RE:FireServer("Claim")
-    end)
-    return ok, err
-end
-
-local function AutoCollectLoop()
-    task.spawn(function()
-        while Collector.enabled do
-            local lp = game:GetService("Players").LocalPlayer
-            local pg = lp and lp:FindFirstChild("PlayerGui")
-            local data = pg and pg:FindFirstChild("Data")
-            local pets = data and data:FindFirstChild("Pets")
-
-            if pets then
-                for _, ch in ipairs(pets:GetChildren()) do
-                    -- Only process if attribute D exists (present / not nil)
-                    local hasD = (ch:GetAttribute("D") ~= nil)
-                    if hasD then
-                        local uidAttr = ch:GetAttribute("UID")
-                        local uid = (uidAttr and tostring(uidAttr)) or ch.Name
-                        ClaimPetUID(uid)
-                        task.wait(0.02)
-                    end
-                end
-            end
-
-            task.wait(Collector.interval)
-        end
-    end)
-end
-
--- UI: slider with min=1, max=120, step 0.5
-Tabs.Collect:Slider({
-    Title = "Collect interval (s)",
-    Value = { Min = 1, Max = 120, Default = 60 },
-    Step = 1,
-    Callback = function(v)
-        local val = tonumber(v) or 60
-        if val < 1 then val = 1 end
-        if val > 120 then val = 120 end
-        Collector.interval = val
+-- =================== TAB: Auto Recall ===================
+local BRVS_AutoRecallTab = BRVS_Window:CreateTab("Auto Recall", "monitor-dot")
+BRVS_AutoRecallTab:CreateSection("Auto Recall")
+BRVS_AutoRecallTab:CreateButton({
+    Name = "Recall All",
+    Callback = function()
+        BRVS_RecallAll_ExcludeBPV_RequireD_PG()
     end
 })
-
-Tabs.Collect:Toggle({
-    Title = "Auto Collect",
-    Value = false,
-    Callback = function(on)
-        Collector.enabled = on
-        if on then AutoCollectLoop() end
-    end
-})
-
-
--- ====== Inventory (Main tab, bullets, live, filter foods) ==================
-local invEggPara  = Tabs.Inv:Paragraph({ Title = "Eggs",  Desc = "- Loading..." })
-local invFoodPara = Tabs.Inv:Paragraph({ Title = "Foods", Desc = "- Loading..." })
-
-local function SumEggs()
-    local eggsFolder = LocalPlayer:FindFirstChild("PlayerGui")
-        and LocalPlayer.PlayerGui:FindFirstChild("Data")
-        and LocalPlayer.PlayerGui.Data:FindFirstChild("Egg")
-    local map = {}
-    if eggsFolder then
-        for _,eg in ipairs(eggsFolder:GetChildren()) do
-            if not eg:GetAttribute("D") and not eg:GetAttribute("BPV") then
-                local T = tostring(eg:GetAttribute("T") or "?")
-                local M = eg:GetAttribute("M")
-                local key
-                if M ~= nil then
-                    key = T .. " (" .. tostring(M) .. ")"
-                else
-                    key = T .. " "
-                end
-                map[key] = (map[key] or 0) + 1
-            end
-        end
-    end
-    local arr = {}
-    for k,v in pairs(map) do table.insert(arr, {name=k, count=v}) end
-    table.sort(arr, function(a,b) return a.name < b.name end)
-    return arr
-end
-local function SumFoods()
-    local cfg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("Data") and LocalPlayer.PlayerGui.Data:FindFirstChild("Asset")
-    local out = {}
-    if not cfg then return out end
-    for k,v in pairs(cfg:GetAttributes()) do
-        if v and type(v)~="boolean" and v~=0 and v~="" then table.insert(out, {name=k, count=v}) end
-    end
-    for _,child in ipairs(cfg:GetChildren()) do
-        local ok,val = pcall(function() return child.Value end)
-        if ok and val and val~=0 then table.insert(out, {name=child.Name, count=val}) end
-    end
-    table.sort(out, function(a,b) return a.name < b.name end)
-    return out
-end
-
-local function formatBullets(list)
-    if #list == 0 then return "- None" end
-    return table.concat(list, "\n")
-end
-
-local function BuildEggLines()
-    local lines = {}
-    for _,e in ipairs(SumEggs()) do table.insert(lines, ("- %s x%d"):format(e.name, e.count)) end
-    return lines
-end
-local function BuildFoodLines()
-    local want = {}; for _,n in ipairs(BRVS_FOOD_OPTIONS) do want[n] = true end
-    local lines = {}
-    for _,f in ipairs(SumFoods()) do if want[f.name] then table.insert(lines, ("- %s x%s"):format(f.name, f.count)) end end
-    return lines
-end
-
--- Live inventory
-local _invRunning = true
-task.spawn(function()
-    while _invRunning do
-        SetPara(invEggPara, formatBullets(BuildEggLines()))
-        SetPara(invFoodPara, formatBullets(BuildFoodLines()))
-        task.wait(1)
-    end
-end)
-
--- ====== Auto Gift (Main tab) ===============================================
-local Gift = { enabled = false, interval = 1.0, targetPlayer = nil }
-local function playersList()
-    local arr = {}
-    for _,plr in ipairs(Players:GetPlayers()) do if plr ~= LocalPlayer then table.insert(arr, plr.Name) end end
-    if #arr == 0 then table.insert(arr, "None") end
-    return arr
-end
-Tabs.Gift:Dropdown({ Title = "Target Player", Values = playersList(), Value = "None", AllowNone = true, Callback = function(v)
-    Gift.targetPlayer = (v == "None") and nil or v
-end })
-Tabs.Gift:Button({ Title = "Refresh Players", Icon = "users", Callback = function()
-    WindUI:Notify({ Title = "Players", Content = "Refreshed list", Duration = 2 })
-end })
-
--- Gift status paragraph
-local setGiftStatus = (function()
-    local setFn = nil
-    setFn = select(1, statusParagraph(Tabs.Gift, "Gift Status", "gift"))
-    return setFn or function() end
-end)()
-
--- Clear Hand (via DeployRE)
-local DeployRE
-Tabs.Gift:Button({ Title = "Clear Hand (Deploy slots)", Icon = "eraser", Callback = function()
-    if not DeployRE then DeployRE = getRemote({"Remote","DeployRE"}) end
-    local pg = LocalPlayer:FindFirstChild("PlayerGui")
-    local data = pg and pg:FindFirstChild("Data")
-    local deploy = data and data:FindFirstChild("Deploy")
-    if not (deploy and DeployRE) then WindUI:Notify({Title="Gift",Content="Deploy/DeployRE missing",Duration=2,Icon="x"}); return end
-    local fired = 0
-    for i=3,8 do
-        local nm = "S"..tostring(i)
-        local attr = deploy:GetAttribute(nm)
-        if typeof(attr)=="string" and #attr>0 then
-            local parts = string.split(attr, "_")
-            local uid = parts[2]
-            if uid and #uid>0 then DeployRE:FireServer({ event="deploy", uid=uid }); fired = fired + 1 end
-        end
-    end
-    WindUI:Notify({ Title="Gift", Content=("Cleared %d slot(s)"):format(fired), Duration=2 })
-end })
-
--- Teleport behind selected target
-local function getHRP(char) return char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")) end
-Tabs.Gift:Button({ Title = "Teleport Behind Target", Icon = "navigation", Callback = function()
-    local targetName = Gift.targetPlayer
-    if not targetName or targetName=="None" then WindUI:Notify({Title="Gift",Content="Select a target first",Duration=2,Icon="x"}); return end
-    local target = nil; for _,p in ipairs(Players:GetPlayers()) do if p~=LocalPlayer and p.Name==targetName then target=p break end end
-    if not target then WindUI:Notify({Title="Gift",Content="Target not found",Duration=2,Icon="x"}); return end
-    local my = getHRP(LocalPlayer.Character)
-    local th = getHRP(target.Character)
-    if not (my and th) then WindUI:Notify({Title="Gift",Content="HRP not ready",Duration=2,Icon="x"}); return end
-    my.AssemblyLinearVelocity = Vector3.zero
-    local dest = th.CFrame * CFrame.new(0,3,3)
-    my.CFrame = CFrame.new(dest.Position, (th.CFrame * CFrame.new(0,0,-5)).Position)
-    setGiftStatus("Teleported behind "..target.Name)
-end })
-
--- ====== Advanced Gifting UI & Logic =======================================
--- Scanners
-local function ScanGiftable(containerName)
-    local pg = LocalPlayer:FindFirstChild("PlayerGui")
-    local data = pg and pg:FindFirstChild("Data")
-    local folder = data and data:FindFirstChild(containerName)
-    local result = {}
-    if not folder then return result end
-    for _,it in ipairs(folder:GetChildren()) do
-        if not it:GetAttribute("D") and not it:GetAttribute("BPV") then
-            local T = it:GetAttribute("T")
-            local M = it:GetAttribute("M")
-            local UIDAttr = it:GetAttribute("UID")
-            local uid = (UIDAttr and tostring(UIDAttr)) or it.Name
-            local key = tostring(T)
-            result[key] = result[key] or { key = key, count = 0, list = {}, mutations = {} }
-            result[key].count = result[key].count + 1
-            table.insert(result[key].list, { uid = uid, M = M })
-            if M ~= nil then
-                local mm = tostring(M)
-                result[key].mutations[mm] = (result[key].mutations[mm] or 0) + 1
-            end
-        end
-    end
-    local packs = {}
-    for _,pack in pairs(result) do table.insert(packs, pack) end
-    table.sort(packs, function(a,b) return a.key < b.key end)
-    return packs
-end
-local function ScanGiftablePets()  return ScanGiftable("Pet") end
-local function ScanGiftableEggs()  return ScanGiftable("Egg") end
-local function ScanGiftableFoods()
-    local pg = LocalPlayer:FindFirstChild("PlayerGui")
-    local data = pg and pg:FindFirstChild("Data")
-    local asset = data and data:FindFirstChild("Asset")
-    local list = {}
-    if not asset then return list end
-    local allow = {}; for _,n in ipairs(BRVS_FOOD_OPTIONS) do allow[n]=true end
-    for k,v in pairs(asset:GetAttributes()) do
-        if allow[k] and type(v)~="boolean" and v and v~=0 and v~="" then table.insert(list, { food = k, value = v }) end
-    end
-    table.sort(list, function(a,b) return a.food < b.food end)
-    return list
-end
-
--- UI state for advanced gifting
-local mode = "Pet"
-local pets = ScanGiftablePets()
-local eggs = ScanGiftableEggs()
-local foodsK = ScanGiftableFoods()
-local selectedPetKey = pets[1] and pets[1].key or nil
-local selectedEggKey = eggs[1] and eggs[1].key or nil
-local selectedFoodKey = foodsK[1] and foodsK[1].food or nil
-local selectedM = "Any"
-local qty, sending = 1, false
-
-Tabs.Gift:Dropdown({ Title="Item Type", Values={"Pet","Egg","Food"}, Value=mode, Callback=function(v) mode=v end })
-
-local function packLabels(packs)
-    local arr = {}
-    for _,p in ipairs(packs) do
-        table.insert(arr, ("%s (x%d)"):format(p.key, p.count))
-    end
-    if #arr==0 then arr={"None"} end
-    return arr
-end
-
-
-Tabs.Gift:Dropdown({ Title="Pet Type", Values=packLabels(pets), Value=(pets[1] and ("%s (x%d)"):format(pets[1].key, pets[1].count) or "None"), Callback=function(v)
-    selectedPetKey = v and v:match("^(.-)%s+%(") or v
-    for _,pack in ipairs(pets) do
-        if pack.key == selectedPetKey then
-            local list={"Any"}; for m,_ in pairs(pack.mutations or {}) do table.insert(list, tostring(m)) end
-            table.sort(list, function(a,b) if a=="Any" then return true elseif b=="Any" then return false else return a<b end end)
-            Tabs.Gift:Dropdown({ Title="Mutation", Values=list, Value=list[1], Callback=function(v2) selectedM=v2 end })
-            break
-        end
-    end
-end })
-
-Tabs.Gift:Dropdown({ Title="Egg Type", Values=packLabels(eggs), Value=(eggs[1] and ("%s (x%d)"):format(eggs[1].key, eggs[1].count) or "None"), Callback=function(v)
-    selectedEggKey = v and v:match("^(.-)%s+%(") or v
-    for _,pack in ipairs(eggs) do
-        if pack.key == selectedEggKey then
-            local list={"Any"}; for m,_ in pairs(pack.mutations or {}) do table.insert(list, tostring(m)) end
-            table.sort(list, function(a,b) if a=="Any" then return true elseif b=="Any" then return false else return a<b end end)
-            Tabs.Gift:Dropdown({ Title="Mutation", Values=list, Value=list[1], Callback=function(v2) selectedM=v2 end })
-            break
-        end
-    end
-end })
-
-local foodLabels = {}; for _,it in ipairs(foodsK) do table.insert(foodLabels, ("%s (x%s)"):format(it.food, tostring(it.value))) end
-if #foodLabels==0 then foodLabels={"None"} end
-Tabs.Gift:Dropdown({ Title="Food", Values=foodLabels, Value=foodLabels[1], Callback=function(v) selectedFoodKey = v and v:match("^(.-)%s+%(") or v end })
-
-Tabs.Gift:Input({ Title="Qty", Placeholder="1", Numeric=true, Callback=function(txt) local n=tonumber(txt) or 1; if n<1 then n=1 end; qty=math.floor(n) end })
-
--- Gift core
-local GiftRE
-local function ensureTarget(name)
-    if not name then return nil end
-    for _,p in ipairs(Players:GetPlayers()) do if p ~= LocalPlayer and p.Name == name then return p end end
-    return nil
-end
-local function SendGiftTo(targetPlr)
-    if not GiftRE then GiftRE = getRemote({"Remote","GiftRE"}) end
-    if not GiftRE then return false, "GiftRE missing" end
-    local ok, err = pcall(function() GiftRE:FireServer(targetPlr) end)
-    return ok, err
-end
-local function FocusGift(uid) if uid then safeFire2(CharacterRE or getRemote({"Remote","CharacterRE"}), "Focus", uid) end end
-local function UnfocusGift() safeFire2(CharacterRE or getRemote({"Remote","CharacterRE"}), "Focus") end
-local function giftOnce(uid, targetPlr)
-    FocusGift(uid); task.wait(0.25)
-    local ok,err = SendGiftTo(targetPlr)
-    task.wait(0.25); UnfocusGift()
-    return ok,err
-end
-local function PopNextUID(packs, key, wantedM)
-    for _,pack in ipairs(packs) do
-        if pack.key == key and pack.count > 0 and #pack.list > 0 then
-            for i,ud in ipairs(pack.list) do
-                if wantedM == nil or ud.M == wantedM then
-                    table.remove(pack.list, i)
-                    pack.count = pack.count - 1
-                    return ud.uid
-                end
-            end
-            return nil
-        end
-    end
-    return nil
-end
-
-Tabs.Gift:Button({ Title="Start Gifting", Icon="gift", Callback=function()
-    if sending then return end
-    local targetName = Gift and Gift.targetPlayer or nil
-    local target = ensureTarget(targetName)
-    if not target then WindUI:Notify({Title="Gift",Content="Target not found.",Duration=3,Icon="x"}); return end
-    local left, sent = qty, 0
-    sending = true
-    setGiftStatus(("Gifting %s x%d to %s…"):format(mode, qty, target.Name))
-
-    task.spawn(function()
-        if mode == "Food" then
-            while sending and left > 0 do
-                target = ensureTarget(targetName); if not target then break end
-                local uid = selectedFoodKey
-                local ok, err = giftOnce(uid, target)
-                if ok then sent = sent + 1; left = left - 1; setGiftStatus(("Gifted FOOD %s (%d/%d)"):format(selectedFoodKey, sent, qty))
-                else WindUI:Notify({Title="Gift",Content="Gift failed: "..tostring(err),Duration=3,Icon="x"}); break end
-                task.wait(0.25)
-            end
-        elseif mode == "Pet" then
-            local packs = ScanGiftablePets()
-            local wantedM = (selectedM~="Any") and tonumber(selectedM) or ((selectedM~="Any") and selectedM or nil)
-            while sending and left > 0 do
-                target = ensureTarget(targetName); if not target then break end
-                local uid = PopNextUID(packs, selectedPetKey, wantedM)
-                if not uid then WindUI:Notify({Title="Gift",Content="No more pets (or mutation mismatch).",Duration=3,Icon="x"}); break end
-                local ok, err = giftOnce(uid, target)
-                if ok then sent = sent + 1; left = left - 1; setGiftStatus(("Gifted PET %s (%d/%d)"):format(selectedPetKey, sent, qty))
-                else WindUI:Notify({Title="Gift",Content="Gift failed: "..tostring(err),Duration=3,Icon="x"}); break end
-                task.wait(0.25)
-            end
-        else -- Egg
-            local packs = ScanGiftableEggs()
-            local wantedM = (selectedM~="Any") and tonumber(selectedM) or ((selectedM~="Any") and selectedM or nil)
-            while sending and left > 0 do
-                target = ensureTarget(targetName); if not target then break end
-                local uid = PopNextUID(packs, selectedEggKey, wantedM)
-                if not uid then WindUI:Notify({Title="Gift",Content="No more eggs (or mutation mismatch).",Duration=3,Icon="x"}); break end
-                local ok, err = giftOnce(uid, target)
-                if ok then sent = sent + 1; left = left - 1; setGiftStatus(("Gifted EGG %s (%d/%d)"):format(selectedEggKey, sent, qty))
-                else WindUI:Notify({Title="Gift",Content="Gift failed: "..tostring(err),Duration=3,Icon="x"}); break end
-                task.wait(0.25)
-            end
-        end
-        WindUI:Notify({ Title="Gift", Content=("Done. Sent %d/%d."):format(sent, qty), Duration=3 })
-        sending = false
-        setGiftStatus("Idle")
-    end)
-end })
-
-Tabs.Gift:Button({ Title="Stop", Icon="square", Variant="Tertiary", Callback=function() sending=false; setGiftStatus("Idle") end })
-
-Tabs.Gift:Button({ Title="Refresh Players/Items", Icon="refresh-cw", Callback=function()
-    local playersNew = {}; for _,plr in ipairs(Players:GetPlayers()) do if plr ~= LocalPlayer then table.insert(playersNew, plr.Name) end end
-    table.sort(playersNew)
-    pets = ScanGiftablePets(); eggs = ScanGiftableEggs(); foodsK = ScanGiftableFoods()
-    WindUI:Notify({ Title="Gift", Content="Lists refreshed.", Duration=2 })
-end })
-
--- ====== UI: Origin tabs (Buy / Collect / Place) ============================
--- Buy (uses fixed lists for Egg Name / Mutation / Foods; mutation is a BUY filter only)
--- Live selection paragraphs (Auto Buy)
-local eggSelPara  = Tabs.Buy:Paragraph({ Title = "Selected Egg",      Desc = "- None" })
-local mutSelPara  = Tabs.Buy:Paragraph({ Title = "Selected Mutation", Desc = "- None" })
-
-local function _updateEggParas()
-    SetPara(eggSelPara, _fmtList(AutoBuyEggs.names))
-    SetPara(mutSelPara, (AutoBuyEggs.mutation and tostring(AutoBuyEggs.mutation)) or "- None")
-end
-local EggNameDropdown = Tabs.Buy:Dropdown({ Title = "Egg Name", Values = BRVS_EGG_NAMES, Value = { "" }, Multi = true, AllowNone = true, Callback = function(vals)
-    AutoBuyEggs.names = vals
-    _updateEggParas()
-end })
-Tabs.Buy:Dropdown({ Title = "Mutation", Values = BRVS_MUTATIONS, Value = "None", Callback = function(v)
-    AutoBuyEggs.mutation = v
-    _updateEggParas()
-end })
-Tabs.Buy:Toggle({ Title = "Auto Buy Eggs", Value = false, Callback = function(on)
-    AutoBuyEggs.enabled = on; if on then AutoBuyEggsLoop() end
-end })
-
--- Auto Buy Food
-local foodSelPara = Tabs.Buy:Paragraph({ Title = "Selected Foods",    Desc = "- None" })
-local function _updateFoodPara()
-    SetPara(foodSelPara, _fmtList(AutoBuyFood.items))
-end
-local FoodsDropdown = Tabs.Buy:Dropdown({ Title = "Foods", Values = BRVS_FOOD_OPTIONS, Value = {}, Multi = true, AllowNone = true, Callback = function(vals)
-    AutoBuyFood.items = vals
-    _updateFoodPara()
-end })
-Tabs.Buy:Toggle({ Title = "Auto Buy Food", Value = false, Callback = function(on)
-    AutoBuyFood.enabled = on; if on then AutoBuyFoodLoop() end
-end })
-
-
--- Place (uses scanned names from inventory so you place what you own)
--- Build clean list for the Auto Place egg dropdown (dedupe "Any")
-local function BuildEggNameValuesForPlace()
-    local values = {}
-    if eggNames and #eggNames > 0 then
-        table.insert(values, "Any")
-        for _, v in ipairs(eggNames) do
-            if v ~= "Any" then table.insert(values, v) end
-        end
-    else
-        -- When no eggs found, only show a single "Any"
-        values = { "Any" }
-    end
-    return values
-end
-
--- Replace your existing PlaceEggDropdown with this:
-local PlaceEggDropdown = Tabs.Place:Dropdown({
-    Title = "Egg type to place",
-    Values = BuildEggNameValuesForPlace(),
-    Value  = "Any",
-    Callback = function(v)
-        _G.__AUTO_PLACE_EGG = v
-    end
-})
-local mutsForPlace = { "Any", table.unpack(BRVS_MUTATIONS) }
-local PlaceMutDropdown = Tabs.Place:Dropdown({
-    Title = "Mutation to place",
-    Values = mutsForPlace,  -- use static list
-    Value = mutsForPlace[1] or "Any",
-    Callback = function(v)
-        _G.__AUTO_PLACE_MUT = v
-    end
-})
-Tabs.Place:Slider({ Title = "Place cadence (s)", Value = { Min = 0.5, Max = 3, Default = 0.5 }, Step = 0.05, Callback = function(v)
-    _G.__AUTO_PLACE_DELAY = tonumber(v) or 0.5; eggDelay = _G.__AUTO_PLACE_DELAY
-end })
-Tabs.Place:Toggle({ Title = "Enable Auto Place (Farm)", Value = false, Callback = function(on)
-    runningEggFarm.Farm = false; runningEggFarm.WaterFarm = false
-    _G["Farm_egg_idx"], _G["WaterFarm_egg_idx"] = 0, 0
-    refreshTiles()
-    if on then AutoPlaceEggs("Farm", function() return _G.__AUTO_PLACE_EGG or "Any" end, function() return _G.__AUTO_PLACE_MUT or "Any" end) end
-end })
-Tabs.Place:Toggle({ Title = "Enable Auto Place (WaterFarm)", Value = false, Callback = function(on)
-    runningEggFarm.Farm = false; runningEggFarm.WaterFarm = false
-    _G["Farm_egg_idx"], _G["WaterFarm_egg_idx"] = 0, 0
-    refreshTiles()
-    if on then AutoPlaceEggs("WaterFarm", function() return _G.__AUTO_PLACE_EGG or "Any" end, function() return _G.__AUTO_PLACE_MUT or "Any" end) end
-end })
-
--- ====== Auto-Fishing ========================================================
-local FishingRE
-local fishStatus = select(1, statusParagraph(Tabs.Util, "Auto Fishing", "fish"))
-local FISH_CFRAME = CFrame.new(
-    -534.689209, 16.9160748, 206.973068,
-    -0.999972939, 4.14041921e-08, 0.00735867722,
-     4.164934e-08, 1, 3.31608945e-08,
-    -0.00735867722, 3.34664811e-08, -0.999972939
-)
-local THROW_POS = Vector3.new(-534.799560546875, 11, 231.97265625)
-
-local bait = "FishingBait3"
-local dFocus, dThrow, dPull = 0.4, 1, 0.50
-local fishOn = false
-
-local function HRP()
-    local c = LocalPlayer.Character
-    return c and c:FindFirstChild("HumanoidRootPart") or nil
-end
-local function ensureSpot()
-    local p = HRP()
-    if not p then fishStatus("waiting for character…"); return false end
-    local dist = (p.Position - FISH_CFRAME.Position).Magnitude
-    local dirDelta = (p.CFrame.LookVector - FISH_CFRAME.LookVector).Magnitude
-    if dist > 0.1 or dirDelta > 1e-3 then
-        p.AssemblyLinearVelocity = Vector3.zero
-        p.CFrame = FISH_CFRAME
-        task.wait(0.5)
-    end
-    return true
-end
--- Replace the whole isFishingActive() with this:
-local function isFishingActive()
-    local fishPoint = Workspace:FindFirstChild("FishPoints")
-    if not fishPoint then
-        return false, "FishPoints not found"
-    end
-
-    local fp1 = fishPoint:FindFirstChild("FishPoint1")
-    if not fp1 then
-        return false, "FishPoint1 not found"
-    end
-
-    local fx = fp1:FindFirstChild("FX_Fish_Special")
-    if not fx then
-        return false, "Fishing not active"
-    end
-
-    return true
-end
-
-local function oneFishCycle()
-    -- ✅ Guard: check if fishing event is active
-    local ok, msg = isFishingActive()
-    if not ok then
-        fishStatus(msg)
-        task.wait(1)
-        return
-    end
-
-    if not CharacterRE then CharacterRE = getRemote({"Remote","CharacterRE"}) end
-    if not FishingRE then FishingRE = getRemote({"Remote","FishingRE"}) end
-    if not (CharacterRE and FishingRE) then
-        fishStatus("waiting for remotes…")
-        task.wait(0.3)
-        return
-    end
-    if not ensureSpot() then return end
-
-    fishStatus("focusing rod…")
-    for i = 1, 3 do
-        safeFire2(CharacterRE, "Focus", "FishRob")
-        task.wait(dFocus)
-    end
-
-    fishStatus("throwing…")
-    safeFire2(FishingRE, "Throw", { Bait = bait, Pos = THROW_POS })
-    task.wait(dThrow)
-
-    fishStatus("pulling…")
-    for i = 1, 10 do
-        safeFire2(FishingRE, "POUT", { SUC = 1 })
-        task.wait(dPull)
-    end
-    fishStatus("cycle complete")
-end
-
-Tabs.Util:Dropdown({ Title="Fishing Bait", Values={"FishingBait1","FishingBait2","FishingBait3"}, Value=bait, Callback=function(v) bait=v end })
-
--- Fixed values (set them here manually)
-dFocus = 0.4
-dThrow = 1.0
-dPull  = 0.50
-Tabs.Util:Toggle({ Title="Enable Auto-Fishing", Value=false, Callback=function(v) fishOn=v; fishStatus(v and "starting…" or "Idle") end })
-
-task.spawn(function()
-    while true do
-        if fishOn then oneFishCycle() else task.wait(0.1) end
-    end
-end)
-
 ----------------------------------------------------------------
 -- BRVS Auto Place (by PetProduce) — No D, No BPV, Focus→Place→Clear
 ----------------------------------------------------------------
@@ -1285,11 +1443,6 @@ local function BRVS_KindForPetInst(petInst, petData)
     return "Normal"
 end
 
--- local function BRVS_KindForPetInst(petInst)
---     local k = petInst:GetAttribute("BPT")
---     if k == "Fish" or k == "Normal" then return k end
---     return "Normal"
--- end
 
 -- Gather pets, compute GetPetProduce, sort DESC
 local function BRVS_CollectPetsWithProduce(rateMul)
@@ -1324,7 +1477,7 @@ local function BRVS_CollectPetsWithProduce(rateMul)
 end
 
 -- === Focus → Place → Clear
-local PLACE_PACE = 0.35
+local PLACE_PACE = 0.3
 local function BRVS_FireFocus(uid)
     local re = BRVS_GetCharacterRE(); if not re then return end
     if uid then re:FireServer("Focus", uid) else re:FireServer("Focus") end
@@ -1387,257 +1540,394 @@ function BRVS_AutoPlaceByProduceNow()
 end
 
 
--- (Logic order & free-tile scan mirror the BRVS reference.) :contentReference[oaicite:2]{index=2}
 ----------------------------------------------------------------
--- UI: New "Auto Place Pet" tab (keep eggs on their own tab)
+-- UI: Toggle that behaves like a "Place Now" button
+-- (Assumes you have BRVS_AutoRecallTab and BRVS_Rayfield; guard if not)
 ----------------------------------------------------------------
-Tabs.PlacePet = Tabs.PlacePet or Sections.Origin:Tab({ Title = "Auto Place Pet", Icon = "cat" })  -- new tab
+do
+    if BRVS_AutoRecallTab and typeof(BRVS_AutoRecallTab.CreateToggle) == "function" then
+        BRVS_AutoRecallTab:CreateSection("Auto Place (by PetProduce)")
 
-----------------------------------------------------------------
--- Helpers: access PlayerGui Pets & attribute filters
-----------------------------------------------------------------
-local function _PGPets()
-    local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
-    local data = pg and pg:FindFirstChild("Data")
-    return data and data:FindFirstChild("Pets") or nil
-end
-
-local function _truthyD(inst)
-    local d = inst:GetAttribute("D")
-    if d == nil then return false end
-    local t = typeof(d)
-    if t == "boolean" then return d end
-    if t == "number"  then return d ~= 0 end
-    if t == "string"  then d = d:lower(); return d == "1" or d == "true" end
-    return true
-end
-
-local function _hasBPV(inst)
-    local v = inst:GetAttribute("BPV")
-    if v == nil then return false end
-    if typeof(v) == "number" then return true end
-    if typeof(v) == "string" then return tonumber(v) ~= nil end
-    return true
-end
-
-----------------------------------------------------------------
--- Auto Recall (no tile checks): recall all by del, uid
--- Rule: only pets WITH D, and WITHOUT BPV
--- Uses your CharacterRE_Fire helper for server calls.
-----------------------------------------------------------------
-local function Recall_All_By_Del_UID()
-    local pets = _PGPets()
-    if not pets then
-        WindUI:Notify({ Title="Auto Recall", Content="No Pets container found", Duration=2 })
-        return 0
-    end
-
-    local recalled = 0
-    for _, pet in ipairs(pets:GetChildren()) do
-        if _truthyD(pet) and not _hasBPV(pet) then
-            local uid = pet.Name
-            -- Try lowercase "del" first, then "Del", then fallback to "Recall"
-            local ok = false
-            if CharacterRE_Fire then
-                ok = (pcall(function() CharacterRE_Fire("Del", uid) end) and true) or false
-            end
-            if ok then
-                recalled = recalled + 1
-                task.wait(0.1)
-            end
-        end
-    end
-
-    WindUI:Notify({ Title="Auto Recall", Content=("Recalled %d pets (D=on, no BPV)"):format(recalled), Duration=2 })
-    return recalled
-end
--- (CharacterRE_Fire exists in your script under ReplicatedStorage.Remote.CharacterRE.) :contentReference[oaicite:1]{index=1}
-
-----------------------------------------------------------------
--- UI on the "Auto Place Pet" tab
-----------------------------------------------------------------
-
--- 1) One-shot recall button (no tiles, just del/uid)
-Tabs.PlacePet:Button({
-    Title   = "Recall All (D set, exclude BPV) — del, uid",
-    Icon    = "undo-2",
-    Variant = "Outline",
-    Callback = function()
-        Recall_All_By_Del_UID()
-    end
-})
-
--- 2) One-shot "Place by Produce" button (expects your BRVS placer)
---    If the function isn't defined yet, we warn gracefully.
-Tabs.PlacePet:Button({
-    Title   = "Place by Produce (No D, No BPV)",
-    Icon    = "rows-3",
-    Variant = "Primary",
-    Callback = function()
-        BRVS_AutoPlaceByProduceNow()
-    end
-})
-
--- =================== TAB: Auto Hatch (works with statusParagraph) ===================
-
--- Tab
-Tabs.Hatch = Tabs.Hatch or Sections.Origin:Tab({ Title = "Auto Hatch", Icon = "egg" })
-
--- ✅ Use your statusParagraph helper (like Auto Fishing)
-local setHatchStatus = select(1, statusParagraph(Tabs.Hatch, "Auto Hatch", "egg"))  -- returns a setter fn
-setHatchStatus("Status: Disabled")
-
--- State
-local AH_ENABLED = false
-local AH_CONNS = {}
-local HATCHED = 0
-
--- Services/locals
-local Players   = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
-local LocalPlayer = Players.LocalPlayer
-local MY_UID = LocalPlayer and LocalPlayer.UserId
-
--- Utils
-local function _disconnectAll()
-    for _, c in ipairs(AH_CONNS) do pcall(function() c:Disconnect() end) end
-    table.clear(AH_CONNS)
-end
-
-local MARK_NAMES = { "ExclamationMark", "ExMark", "!" }
-local function _hasMark(m)
-    for _,n in ipairs(MARK_NAMES) do
-        if m:FindFirstChild(n, true) then return true end
-    end
-    return false
-end
-
-local function _looksLikeEgg(m)
-    return m
-       and m:IsA("Model")
-       and (m:GetAttribute("UserId") ~= nil)
-       and (m:FindFirstChild("RootPart", true) ~= nil)
-end
-
-local function _ownedByMe(m) return (m:GetAttribute("UserId") == MY_UID) end
-
-local function _getRF(m)
-    -- “RF” may be a RemoteFunction or RemoteEvent; search shallow first then deep
-    local rf = m:FindFirstChild("RF") or m:FindFirstChild("RF", true)
-    return rf
-end
-
-local function _tryHatch(rf)
-    if not rf then return false end
-    if rf:IsA("RemoteFunction") then
-        local ok, res = pcall(function() return rf:InvokeServer("Hatch") end)
-        return ok and (res == true or res == 1 or res == "ok")
-    elseif rf:IsA("RemoteEvent") then
-        return pcall(function() rf:FireServer("Hatch") end)
-    end
-    return false
-end
-
--- Debounce per egg instance
-local INFLIGHT = setmetatable({}, { __mode = "k" })
-
-local function hatchOnce(egg)
-    if not (AH_ENABLED and egg and egg.Parent) then return end
-    if INFLIGHT[egg] then return end
-    if not (_looksLikeEgg(egg) and _ownedByMe(egg) and _hasMark(egg)) then return end
-
-    local rf = _getRF(egg)
-    if not rf then return end
-
-    INFLIGHT[egg] = true
-    task.spawn(function()
-        if _tryHatch(rf) then
-            HATCHED = HATCED + 1
-            setHatchStatus(("Running — Hatched: %d"):format(HATCHED))
-        end
-        INFLIGHT[egg] = nil
-    end)
-end
-
-local ROOT_NAMES = {
-    "PlayerBuiltBlocks","PlayerBlocks","PlayerBuild","BuiltBlocks",
-    "Blocks","Items","Placed","Placeables"
-}
-local function findEggRoot()
-    for _,n in ipairs(ROOT_NAMES) do
-        local r = Workspace:FindFirstChild(n)
-        if r then return r end
-    end
-    return Workspace
-end
-
-local function hookModel(m)
-    if not (m and m:IsA("Model")) then return end
-    if _looksLikeEgg(m) and _ownedByMe(m) and _hasMark(m) then hatchOnce(m) end
-    local con = m.DescendantAdded:Connect(function(d)
-        if not AH_ENABLED then return end
-        for _,name in ipairs(MARK_NAMES) do
-            if d.Name == name then
-                local egg = d:FindFirstAncestorOfClass("Model")
-                if egg then hatchOnce(egg) end
-                break
-            end
-        end
-    end)
-    table.insert(AH_CONNS, con)
-end
-
-local function AutoHatch_Start()
-    if AH_ENABLED then return end
-    AH_ENABLED = true
-    HATCHED = 0
-    setHatchStatus("Running — Hatched: 0")
-
-    local ROOT = findEggRoot()
-
-    -- Seed scan
-    for _, inst in ipairs(ROOT:GetDescendants()) do
-        if inst:IsA("Model") then hookModel(inst) end
-        for _,name in ipairs(MARK_NAMES) do
-            if inst.Name == name then
-                local egg = inst:FindFirstAncestorOfClass("Model")
-                if egg then hatchOnce(egg) end
-                break
-            end
-        end
-    end
-
-    -- Live watch
-    table.insert(AH_CONNS, ROOT.DescendantAdded:Connect(function(inst)
-        if not AH_ENABLED then return end
-        if inst:IsA("Model") then
-            hookModel(inst)
-        else
-            for _,name in ipairs(MARK_NAMES) do
-                if inst.Name == name then
-                    local egg = inst:FindFirstAncestorOfClass("Model")
-                    if egg then hatchOnce(egg) end
-                    break
+        local AP_PlaceNowToggle
+        AP_PlaceNowToggle = BRVS_AutoRecallTab:CreateToggle({
+            Name = "Place Now (desc by Produce) — No D, No BPV",
+            CurrentValue = false,
+            Flag = "AP_PlaceNowDescToggle",
+            Callback = function(state)
+                if state then
+                    local placed = BRVS_AutoPlaceByProduceNow()
+                    if BRVS_Rayfield and typeof(BRVS_Rayfield.Notify) == "function" then
+                        BRVS_Rayfield:Notify({
+                            Title   = "Auto Place",
+                            Content = ("Placed %d pets (No D, No BPV)"):format(placed or 0),
+                            Duration= 1,
+                            Image   = "check"
+                        })
+                    end
+                    -- try to flip back OFF so it feels like a "button"
+                    if AP_PlaceNowToggle and typeof(AP_PlaceNowToggle.Set) == "function" then
+                        task.defer(function() AP_PlaceNowToggle:Set(false) end)
+                    end
                 end
             end
-        end
-    end))
-end
-
-local function AutoHatch_Stop()
-    AH_ENABLED = false
-    _disconnectAll()
-    setHatchStatus("Status: Disabled")
-end
-
--- Toggle
-Tabs.Hatch:Toggle({
-    Title   = "Auto Hatch (on ! mark)",
-    Value   = false,
-    Callback = function(on)
-        if on then AutoHatch_Start() else AutoHatch_Stop() end
+        })
     end
+end
+
+-- =================== TAB: Auto Hatch ===================
+local BRVS_AutoHatchTab = BRVS_Window:CreateTab("Auto Hatch", "egg-off")
+BRVS_AutoHatchTab:CreateSection("Auto Hatch (on mark)")
+
+-- config/state
+local BRVS_HatchEnabled = false
+local BRVS_HatchThread = nil
+local BRVS_HatchRate = 15 -- fixed rate (~15/sec safe)
+local BRVS_HatchLabel = nil
+
+-- ===== Non-yielding helpers (use BRVS_* globals) =====
+local function LooksLikeEgg(m)
+	return m and m:IsA("Model")
+		and m:GetAttribute("UserId") ~= nil
+		and (m:FindFirstChild("RootPart", true) ~= nil)
+end
+
+local function OwnedByLocal(m)
+	return m:GetAttribute("UserId") == BRVS_UserId
+end
+
+local function HasMark(m)
+	return m:FindFirstChild("ExclamationMark", true) ~= nil
+end
+
+local function GetRF(m)
+	local rf = m:FindFirstChild("RF")
+	if rf and rf:IsA("RemoteFunction") then return rf end
+	rf = m:FindFirstChild("RF", true)
+	if rf and rf:IsA("RemoteFunction") then return rf end
+	return nil
+end
+
+-- ===== Immediate hatch worker (no queue / no rate limit) =====
+local PLAYER_BLOCKS = BRVS_Workspace:FindFirstChild("PlayerBuiltBlocks")
+
+-- connections we manage so Stop can cleanly disconnect
+local BRVS_HatchConns = {}
+local function _clearHatchConns()
+	for _, c in ipairs(BRVS_HatchConns) do
+		pcall(function() c:Disconnect() end)
+	end
+	BRVS_HatchConns = {}
+end
+
+local function BRVS_StartHatchWorker()
+	if not PLAYER_BLOCKS then return end
+
+	local hatchedCount = 0
+	local inFlight = setmetatable({}, { __mode = "k" }) -- debounce per egg
+	local finished = setmetatable({}, { __mode = "k" }) -- optional: mark done
+
+	-- label updater (no queue now)
+	task.spawn(function()
+		while BRVS_HatchEnabled do
+			local text = string.format("Status: %s | Hatched: %d",
+				"Running", hatchedCount)
+			if BRVS_HatchLabel then BRVS_HatchLabel:Set(text) end
+			task.wait(1)
+		end
+		if BRVS_HatchLabel then BRVS_HatchLabel:Set("Status: Disabled") end
+	end)
+
+	local function HatchOnce(egg)
+		if not BRVS_HatchEnabled then return end
+		if not egg or not egg.Parent then return end
+		if inFlight[egg] or finished[egg] then return end
+		if not (LooksLikeEgg(egg) and OwnedByLocal(egg) and HasMark(egg)) then return end
+
+		local rf = GetRF(egg)
+		if not rf then return end
+
+		inFlight[egg] = true
+		task.spawn(function()
+			local ok, success = pcall(function()
+				return rf:InvokeServer("Hatch")
+			end)
+			if ok and success == true then
+				finished[egg] = true
+				hatchedCount = hatchedCount + 1
+			end
+			inFlight[egg] = nil
+		end)
+	end
+
+	-- Seed: scan existing marked eggs and hatch immediately
+	for _, inst in ipairs(PLAYER_BLOCKS:GetDescendants()) do
+		if inst:IsA("Model") and LooksLikeEgg(inst) and OwnedByLocal(inst) and HasMark(inst) then
+			HatchOnce(inst)
+		end
+	end
+
+	-- Helper: when a model is added, also watch for its mark appearing
+	local function hookModel(m)
+		if not m or not m:IsA("Model") then return end
+		-- If it already has a mark, hatch now
+		if LooksLikeEgg(m) and OwnedByLocal(m) and HasMark(m) then
+			HatchOnce(m)
+		end
+		-- Watch for ExclamationMark under this model only
+		local con = m.DescendantAdded:Connect(function(d)
+			if not BRVS_HatchEnabled then return end
+			if d.Name == "ExclamationMark" then
+				local egg = d:FindFirstAncestorOfClass("Model")
+				if egg then HatchOnce(egg) end
+			end
+		end)
+		table.insert(BRVS_HatchConns, con)
+	end
+
+	-- Global watch: any new model or mark under PLAYER_BLOCKS
+	table.insert(BRVS_HatchConns, PLAYER_BLOCKS.DescendantAdded:Connect(function(inst)
+		if not BRVS_HatchEnabled then return end
+		if inst:IsA("Model") then
+			-- A new egg candidate appeared
+			hookModel(inst)
+		elseif inst.Name == "ExclamationMark" then
+			-- A mark appeared anywhere under PLAYER_BLOCKS
+			local egg = inst:FindFirstAncestorOfClass("Model")
+			if egg then HatchOnce(egg) end
+		end
+	end))
+end
+
+local function BRVS_StopHatchWorker()
+	BRVS_HatchEnabled = false
+	_clearHatchConns()
+	-- Label will be set to Disabled by the updater thread on next tick,
+	-- but ensure immediate UI feedback:
+	if BRVS_HatchLabel then BRVS_HatchLabel:Set("Status: Disabled") end
+end
+
+-- UI: toggle + status label (label is created directly under the toggle)
+local BRVS_HatchToggle = BRVS_AutoHatchTab:CreateToggle({
+	Name = "Auto Hatch (on mark)",
+	CurrentValue = false,
+	Flag = "AutoHatchOnMark",
+	Callback = function(on)
+		if on then
+			if BRVS_HatchEnabled then return end
+			BRVS_HatchEnabled = true
+			BRVS_StartHatchWorker()
+		else
+			BRVS_StopHatchWorker()
+		end
+	end,
 })
 
--- ====== Bootstraps ==========================================================
-refreshTiles();
+BRVS_HatchLabel = BRVS_AutoHatchTab:CreateLabel("Status: Disabled")
+local BRVS_UtilsTab = BRVS_Window:CreateTab("Utils", "sliders")
+
+BRVS_UtilsTab:CreateSection("Ultra Low")
+local BRVS_UltraLowToggle = BRVS_UtilsTab:CreateToggle({
+	Name = "Ultra Low (No Lag + Low Graphics)",
+	CurrentValue = false,
+	Flag = "UltraLow",
+	Callback = function(on)
+		if on then
+			BRVS_ApplyUltraLow()
+		else
+			BRVS_RestoreUltraLow()
+		end
+	end,
+})
+
+BRVS_UtilsTab:CreateSection("AFK")
+
+local ActiveAFKMode = nil
+local BRVS_AntiAfkConn = nil
+local BRVS_AntiAfkThread = nil
+
+-- stop any AFK thread/connections
+local function StopAFK()
+	if BRVS_AntiAfkConn then
+		BRVS_AntiAfkConn:Disconnect()
+		BRVS_AntiAfkConn = nil
+	end
+	BRVS_AntiAfkThread = nil
+	ActiveAFKMode = nil
+end
+
+-- Perform jump
+local function BRVS_PerformJump(times)
+	local char = BRVS_Players.LocalPlayer.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if hum then
+		for _=1, times do
+			hum.Jump = true
+			task.wait(0.2)
+		end
+	end
+end
+
+-- Anti AFK 1 = jump
+local function StartAFK_Jump()
+	StopAFK()
+	ActiveAFKMode = "Jump"
+
+	-- hook Roblox idle event
+	BRVS_AntiAfkConn = BRVS_Players.LocalPlayer.Idled:Connect(function()
+		BRVS_PerformJump(1)
+	end)
+
+	-- periodic jumps
+	BRVS_AntiAfkThread = task.spawn(function()
+		while ActiveAFKMode == "Jump" do
+			BRVS_PerformJump(1)
+			local t = math.random(30, 60) -- random 30–60s
+			local elapsed = 0
+			while ActiveAFKMode == "Jump" and elapsed < t do
+				task.wait(0.25)
+				elapsed = elapsed + 0.25
+			end
+		end
+	end)
+end
+
+-- Anti AFK 2 = virtual click
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local function StartAFK_Click()
+	StopAFK()
+	ActiveAFKMode = "Click"
+
+	BRVS_AntiAfkThread = task.spawn(function()
+		while ActiveAFKMode == "Click" do
+			pcall(function()
+				VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
+				VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+			end)
+			local t = math.random(20, 45) -- random 20–45s
+			local elapsed = 0
+			while ActiveAFKMode == "Click" and elapsed < t do
+				task.wait(0.25)
+				elapsed = elapsed + 0.25
+			end
+		end
+	end)
+end
+
+-- === UI Toggles (mutually exclusive) ===
+BRVS_UtilsTab:CreateToggle({
+	Name = "Anti AFK 1 (Jump)",
+	CurrentValue = false,
+	Flag = "AntiAFK1",
+	Callback = function(on)
+		if on then
+			StartAFK_Jump()
+			-- turn off other toggle
+			BRVS_Rayfield.Flags["AntiAFK2"].Set(false)
+		elseif ActiveAFKMode == "Jump" then
+			StopAFK()
+		end
+	end,
+})
+
+BRVS_UtilsTab:CreateToggle({
+	Name = "Anti AFK 2 (Virtual Click)",
+	CurrentValue = false,
+	Flag = "AntiAFK2",
+	Callback = function(on)
+		if on then
+			StartAFK_Click()
+			-- turn off other toggle
+			BRVS_Rayfield.Flags["AntiAFK1"].Set(false)
+		elseif ActiveAFKMode == "Click" then
+			StopAFK()
+		end
+	end,
+})
+
+--========================================================
+-- Bind island, LIVE stock, inventory, load config
+if BRVS_IslandName then
+	BRVS_BindIsland(BRVS_IslandName)
+else
+	BRVS_Rayfield:Notify({ Title = "Egg Tools", Content = "You are not occupying Island_1..Island_6", Duration = 6, Image = "alert-triangle" })
+end
+
+
+-- Load saved UI state
+BRVS_Rayfield:LoadConfiguration()
+
+BRVS_BindFoodStock()
+BRVS_BindInventoryFood()
+BRVS_BindInventoryEggs()
+-- Sync state from saved flags (prefixed)
+do
+	-- Dropdowns
+	if BRVS_EggDD and BRVS_EggDD.CurrentOption then BRVS_SelEggNames = BRVS_EggDD.CurrentOption or {} end
+	if BRVS_MutDD and BRVS_MutDD.CurrentOption then BRVS_SelMutations = BRVS_MutDD.CurrentOption or {} end
+	if BRVS_FoodDD and BRVS_FoodDD.CurrentOption then BRVS_SelectedFood = BRVS_FoodDD.CurrentOption or {} end
+
+	-- Auto Buy Eggs
+	if BRVS_AutoBuyToggle and BRVS_AutoBuyToggle.CurrentValue then
+		BRVS_AutoBuyEnabled = true
+		BRVS_RescanAutoBuy()
+	end
+
+	-- Auto Buy Food (fixed tick)
+	if BRVS_AutoBuyFoodToggle and BRVS_AutoBuyFoodToggle.CurrentValue and not BRVS_FoodBuyThread then
+		BRVS_FoodBuyEnabled = true
+		BRVS_FoodBuyThread = task.spawn(function()
+			while BRVS_FoodBuyEnabled do
+				local foods = (BRVS_SelectedFood and #BRVS_SelectedFood > 0) and BRVS_SelectedFood or {}
+				local remote = BRVS_GetRemote(BRVS_FOOD_REMOTE_PATH)
+				if #foods > 0 and remote and remote:IsA("RemoteEvent") then
+					for _, item in ipairs(foods) do
+						if not BRVS_FoodBuyEnabled then break end
+						if BRVS_HasFoodStock(item) then
+							remote:FireServer(item)
+							task.wait(0.05)
+						end
+					end
+				end
+				task.wait(BRVS_FoodBuyInterval)
+			end
+		end)
+	end
+
+	-- Auto Collect Pet
+	if BRVS_PetDelaySlider and BRVS_PetDelaySlider.CurrentValue then
+		BRVS_PetCollectInterval = BRVS_PetDelaySlider.CurrentValue
+	end
+	if BRVS_PetToggle and BRVS_PetToggle.CurrentValue and not BRVS_PetCollectThread then
+		BRVS_PetCollectEnabled = true
+		BRVS_PetCollectThread = task.spawn(function()
+			while BRVS_PetCollectEnabled do
+				BRVS_ClaimMyPetsOnce()
+				local t = math.max(0.1, BRVS_PetDelaySlider.CurrentValue or BRVS_PetCollectInterval or 3)
+				local elapsed = 0
+				while BRVS_PetCollectEnabled and elapsed < t do
+					task.wait(0.1); elapsed = elapsed + 0.1
+				end
+			end
+		end)
+	end
+
+	-- Ultra Low restore
+	if BRVS_UltraLowToggle and BRVS_UltraLowToggle.CurrentValue then
+		BRVS_ApplyUltraLow()
+	end
+
+	-- Anti AFK restore
+	if BRVS_Rayfield.Flags["AntiAFK1"] and BRVS_Rayfield.Flags["AntiAFK1"].CurrentValue then
+		-- Restore Jump mode
+		StartAFK_Jump()
+		BRVS_Rayfield.Flags["AntiAFK2"].Set(false)
+
+	elseif BRVS_Rayfield.Flags["AntiAFK2"] and BRVS_Rayfield.Flags["AntiAFK2"].CurrentValue then
+		-- Restore Click mode
+		StartAFK_Click()
+		BRVS_Rayfield.Flags["AntiAFK1"].Set(false)
+	end
+
+	-- Update label if needed
+	if BRVS_IslandLabel and BRVS_IslandName then BRVS_IslandLabel:Set("Island: "..BRVS_IslandName) end
+end
