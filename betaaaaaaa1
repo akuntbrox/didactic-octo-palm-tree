@@ -578,7 +578,7 @@ end
 local BRVS_Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 local BRVS_Window = BRVS_Rayfield:CreateWindow({
-	Name = "Build A Zoo (SNOW) | HrafnHub",
+	Name = "Build A Zoo [SEASON 2] | HrafnHub",
 	Icon = "egg",
 	LoadingTitle = "Loading y0ur stuff",
 	LoadingSubtitle = "by HrafnHub",
@@ -596,80 +596,8 @@ local BRVS_Window = BRVS_Rayfield:CreateWindow({
 	KeySystem = false,
 })
 
-task.spawn(function()
-	while true do
-		task.wait(math.random(10, 120))
-		BRVS_Rayfield:Notify({
-			Title = "Build A Zoo (SNOW) | HrafnHub",
-			Content = "Enjoying this ? Support me at discord.gg/HrafnHub",
-			Duration = 7,
-		})
-	end
-end)
-
 -- =================== TAB: Inventory (Paragraph-based) ===================
 local BRVS_InvTab = BRVS_Window:CreateTab("Inventory", "box")
-
--- Paragraph element for Food (placed before Eggs)
-local BRVS_InvFoodPara = BRVS_InvTab:CreateParagraph({
-    Title = "Food",
-    Content = "loading..."
-})
-
--- Connections we manage for Food paragraph updates
-local BRVS_InvFoodConns = {}
-local function BRVS_ClearInvFoodConns()
-    for _, c in ipairs(BRVS_InvFoodConns) do pcall(function() c:Disconnect() end) end
-    BRVS_InvFoodConns = {}
-end
-
-local function BRVS_RebuildFoodText(assetInst)
-    if not BRVS_InvFoodPara then return end
-    if not assetInst then
-        BRVS_InvFoodPara:Set({ Title = "Food", Content = "(none)" })
-        return
-    end
-
-    local lines = {}
-    for _, name in ipairs(BRVS_FOOD_OPTIONS) do
-        local v = assetInst:GetAttribute(name)
-        if v ~= nil and v ~= false and v ~= 0 then
-            -- If numeric and >0, show a count; otherwise just show the name
-            if type(v) == "number" then
-                if v > 0 then
-                    table.insert(lines, string.format("• %s  ×%d", name, v))
-                end
-            else
-                table.insert(lines, string.format("• %s", name))
-            end
-        end
-    end
-
-    table.sort(lines, function(a, b) return a:lower() < b:lower() end)
-    BRVS_InvFoodPara:Set({
-        Title = "Food",
-        Content = (#lines == 0) and "(none)" or table.concat(lines, "\n")
-    })
-end
-
-local function BRVS_BindInventoryFood()
-    BRVS_ClearInvFoodConns()
-
-    -- Resolve Players.LocalPlayer.PlayerGui.Data.Asset
-    local pg = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
-    local data = pg:WaitForChild("Data")
-    local asset = data:WaitForChild("Asset") -- attributes live here
-
-    -- Initial render
-    BRVS_RebuildFoodText(asset)
-
-    -- Listen for changes on each food attribute we care about
-    for _, name in ipairs(BRVS_FOOD_OPTIONS) do
-        table.insert(BRVS_InvFoodConns, asset:GetAttributeChangedSignal(name):Connect(function()
-            BRVS_RebuildFoodText(asset)
-        end))
-    end
-end
 
 -- Paragraph element for Eggs
 local BRVS_InvEggPara = BRVS_InvTab:CreateParagraph({
@@ -800,14 +728,95 @@ local function BRVS_BindInventoryEggs()
     end
 end
 
+-- Paragraph element for Food (placed before Eggs)
+local BRVS_InvFoodPara = BRVS_InvTab:CreateParagraph({
+    Title = "Food",
+    Content = "loading..."
+})
+
+-- Connections we manage for Food paragraph updates
+local BRVS_InvFoodConns = {}
+local function BRVS_ClearInvFoodConns()
+    for _, c in ipairs(BRVS_InvFoodConns) do pcall(function() c:Disconnect() end) end
+    BRVS_InvFoodConns = {}
+end
+
+local function BRVS_RebuildFoodText(assetInst)
+    if not BRVS_InvFoodPara then return end
+    if not assetInst then
+        BRVS_InvFoodPara:Set({ Title = "Food", Content = "(none)" })
+        return
+    end
+
+    local lines = {}
+    for _, name in ipairs(BRVS_FOOD_OPTIONS) do
+        local v = assetInst:GetAttribute(name)
+        if v ~= nil and v ~= false and v ~= 0 then
+            -- If numeric and >0, show a count; otherwise just show the name
+            if type(v) == "number" then
+                if v > 0 then
+                    table.insert(lines, string.format("• %s  ×%d", name, v))
+                end
+            else
+                table.insert(lines, string.format("• %s", name))
+            end
+        end
+    end
+
+    table.sort(lines, function(a, b) return a:lower() < b:lower() end)
+    BRVS_InvFoodPara:Set({
+        Title = "Food",
+        Content = (#lines == 0) and "(none)" or table.concat(lines, "\n")
+    })
+end
+
+local function BRVS_BindInventoryFood()
+    BRVS_ClearInvFoodConns()
+
+    -- Resolve Players.LocalPlayer.PlayerGui.Data.Asset
+    local pg = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+    local data = pg:WaitForChild("Data")
+    local asset = data:WaitForChild("Asset") -- attributes live here
+
+    -- Initial render
+    BRVS_RebuildFoodText(asset)
+
+    -- Listen for changes on each food attribute we care about
+    for _, name in ipairs(BRVS_FOOD_OPTIONS) do
+        table.insert(BRVS_InvFoodConns, asset:GetAttributeChangedSignal(name):Connect(function()
+            BRVS_RebuildFoodText(asset)
+        end))
+    end
+end
+
 -- call once on init (after window creation)
 -- BRVS_BindInventoryEggs()
 
 -- =================== TAB: Auto Buy ===================
 local BRVS_AutoTab = BRVS_Window:CreateTab("Automation", "rotate-cw")
 local BRVS_IslandLabel = BRVS_AutoTab:CreateLabel(BRVS_IslandName and ("Island: "..BRVS_IslandName) or "Island: (none)")
+local BRVS_EggFilterPara = BRVS_AutoTab:CreateParagraph({
+    Title   = "Egg Buy Filter",
+    Content = "Names: Any\nMutations: Any"
+})
 
-BRVS_AutoTab:CreateSection("Filters")
+local function _fmtList(list)
+    if not list or #list == 0 then return "Any" end
+    for _, v in ipairs(list) do if v == "Any" then return "Any" end end
+    return table.concat(list, ", ")
+end
+
+local function BRVS_UpdateEggFilterPara()
+    if not BRVS_EggFilterPara then return end
+    local namesTxt = _fmtList(BRVS_SelEggNames)
+    local mutsTxt  = _fmtList(BRVS_SelMutations)
+    BRVS_EggFilterPara:Set({
+        Title   = "Egg Buy Filter",
+        Content = ("Names: %s\nMutations: %s"):format(namesTxt, mutsTxt)
+    })
+end
+
+BRVS_AutoTab:CreateSection("Auto Buy Egg")
 local BRVS_EggDD = BRVS_AutoTab:CreateDropdown({
 	Name = "Name(s)",
 	Options = BRVS_EGG_OPTIONS,
@@ -818,6 +827,7 @@ local BRVS_EggDD = BRVS_AutoTab:CreateDropdown({
 		BRVS_SelEggNames = options or {}
 		BRVS_PrintMatches()
 		BRVS_RescanAutoBuy()
+		BRVS_UpdateEggFilterPara()
 	end,
 })
 local BRVS_MutDD = BRVS_AutoTab:CreateDropdown({
@@ -830,6 +840,7 @@ local BRVS_MutDD = BRVS_AutoTab:CreateDropdown({
 		BRVS_SelMutations = options or {}
 		BRVS_PrintMatches()
 		BRVS_RescanAutoBuy()
+		BRVS_UpdateEggFilterPara()
 	end,
 })
 local BRVS_AutoBuyToggle = BRVS_AutoTab:CreateToggle({
@@ -847,7 +858,22 @@ local BRVS_AutoBuyToggle = BRVS_AutoTab:CreateToggle({
 	end,
 })
 
-BRVS_AutoTab:CreateSection("Food Store")
+BRVS_AutoTab:CreateSection("Auto Buy Food")
+local BRVS_FoodSelPara = BRVS_AutoTab:CreateParagraph({
+    Title   = "Food Buy Selection",
+    Content = "(none)"
+})
+
+local function BRVS_UpdateFoodSelPara()
+    if not BRVS_FoodSelPara then return end
+    local foods = BRVS_SelectedFood or {}
+    local text = (#foods == 0) and "(none)" or table.concat(foods, ", ")
+    BRVS_FoodSelPara:Set({
+        Title   = "Food Buy Selection",
+        Content = text
+    })
+end
+
 -- Food multi-select
 local BRVS_FoodDD = BRVS_AutoTab:CreateDropdown({
 	Name = "Food (multi-select)",
@@ -857,6 +883,7 @@ local BRVS_FoodDD = BRVS_AutoTab:CreateDropdown({
 	Flag = "FoodSelect",
 	Callback = function(options)
 		BRVS_SelectedFood = options or {}
+		BRVS_UpdateFoodSelPara()
 	end,
 })
 
@@ -1014,255 +1041,112 @@ local BRVS_PetToggle = BRVS_AutoTab:CreateToggle({
 		end)
 	end,
 })
-
-local RS = game:GetService("ReplicatedStorage")
-local YELLOW_WEATHER = Color3.fromRGB(255, 248, 67)
-
-local BRVS_FishEnabled = false
-local BRVS_LastMarkerKey = nil
-local BRVS_FishThread
-
--- === config ===
-local BRVS_FishBait = "FishingBait3"       -- default bait
-local BRVS_CastForward = 3                 -- studs forward
-local BRVS_WaterHeight = 11                -- Y height of water plane
-local BRVS_TeleportYOffset = 5             -- lift after teleport
-local BRVS_PollInterval = 0.5              -- check interval
-
+-- ====== Auto-Fishing (NEW: FX_Fish_Special-based, fixed spot) =================
+-- Put this near your other fishing config values:
 -- remotes
+local RS = game:GetService("ReplicatedStorage")
 local CharacterRE = RS:WaitForChild("Remote"):WaitForChild("CharacterRE")
 local FishingRE   = RS:WaitForChild("Remote"):WaitForChild("FishingRE")
 local ResourceRE  = RS:WaitForChild("Remote"):WaitForChild("ResourceRE")
+local FISH_CFRAME = CFrame.new(
+    -534.689209, 16.9160748, 206.973068,
+    -0.999972939, 4.14041921e-08, 0.00735867722,
+     4.164934e-08, 1, 3.31608945e-08,
+    -0.00735867722, 3.34664811e-08, -0.999972939
+)
+local THROW_POS = Vector3.new(-534.799560546875, 11, 231.97265625)
 
--- helper for vector.create compatibility
-local function MakeVec3(x,y,z)
-    local ok, v = pcall(function()
-        return (vector and typeof(vector) == "table" and vector.create) and vector.create(x,y,z) or nil
-    end)
-    return v or Vector3.new(x,y,z)
+local BRVS_FishBait = BRVS_FishBait or "FishingBait3" -- reuse your bait var if set elsewhere
+local dFocus, dThrow, dPull = 0.4, 1.0, 0.50
+
+-- Small helpers
+local function HRP()
+    local c = BRVS_Player.Character
+    return c and c:FindFirstChild("HumanoidRootPart") or nil
 end
 
--- ----- Weather label helpers -----
-local function BRVS_GetWeatherLabel()
-    local gui = BRVS_Player:FindFirstChild("PlayerGui"); if not gui then return nil end
-    local overlay = gui:FindFirstChild("Overlay"); if not overlay then return nil end
-    local weather = overlay:FindFirstChild("Weather"); if not weather then return nil end
-    local btn = weather:FindFirstChild("Btn"); if not btn then return nil end
-    return btn:FindFirstChild("TimeLabel")
-end
-
-local function BRVS_GetMarkerKey(lbl)
-    if not lbl then return "nil" end
-    local ok, c = pcall(function() return lbl.TextColor3 end)
-    if ok and typeof(c) == "Color3" then
-        return string.format("%d,%d,%d", math.floor(c.R*255), math.floor(c.G*255), math.floor(c.B*255))
+local function ensureSpot()
+    local p = HRP()
+    if not p then
+        if BRVS_Rayfield then BRVS_Rayfield:Notify({Title="Auto Fish", Content="Waiting for character…", Duration=0.5}) end
+        return false
     end
-    local attr = lbl:GetAttribute("Color3")
-    if typeof(attr) == "Color3" then
-        return string.format("%d,%d,%d", math.floor(attr.R*255), math.floor(attr.G*255), math.floor(attr.B*255))
+    local dist = (p.Position - FISH_CFRAME.Position).Magnitude
+    local dirDelta = (p.CFrame.LookVector - FISH_CFRAME.LookVector).Magnitude
+    if dist > 0.1 or dirDelta > 1e-3 then
+        p.AssemblyLinearVelocity = Vector3.zero
+        p.CFrame = FISH_CFRAME
+        task.wait(0.5)
     end
-    return "unknown"
-end
-
-local function BRVS_IsMarkerYellow(lbl)
-    if not lbl then return false end
-    local ok, c = pcall(function() return lbl.TextColor3 end)
-    if ok and typeof(c) == "Color3" then return c == YELLOW_WEATHER end
-    local attr = lbl:GetAttribute("Color3")
-    return (typeof(attr) == "Color3" and attr == YELLOW_WEATHER)
-end
-
--- ----- Predefined FishingSpotsN (1..8) -----
-local FishingSpots = {
-    [1] = CFrame.new(-290.975464, 16.8169041, -184.160797, 0.108745351, -5.46932588e-09, -0.994069636, 8.62232881e-08, 1, 3.93036403e-09, 0.994069636, -8.61393588e-08, 0.108745351),
-    [2] = CFrame.new(-195.223938, 16.7869015, 391.185425, 0.113660276, -2.27553336e-08, 0.993519664, -2.0718856e-08, 1, 2.52740282e-08, -0.993519664, -2.34572433e-08, 0.113660276),
-    [3] = CFrame.new(75.640007, 16.8738537, 393.076874, 0.0410775058, -1.99907255e-08, 0.999155939, 4.38611458e-08, 1, 1.82043856e-08, -0.999155939, 4.30763372e-08, 0.0410775058),
-    [4] = CFrame.new(74.813736, 16.5027637, -187.207809, 0.07510674, 1.39998342e-08, 0.997175515, -6.37320738e-08, 1, -9.23922272e-09, -0.997175515, -6.28581347e-08, 0.07510674),
-    [5] = CFrame.new(-462.940796, 19.4740677, -162.363861, 0.0573989227, -1.1758312e-07, 0.998351336, -4.44201156e-08, 1, 1.2033118e-07, -0.998351336, -5.12537639e-08, 0.0573989227),
-    [6] = CFrame.new(-461.377563, 16.8520432, 392.929688, -0.248992831, 4.39117986e-09, 0.968505323, -3.68257105e-08, 1, -1.40014906e-08, -0.968505323, -3.9152166e-08, -0.248992831),
-    [7] = CFrame.new(246.968002, 19.6071167, 373.15921, -0.601966798, 4.40889414e-09, -0.798521101, 1.82688993e-08, 1, -8.25072366e-09, 0.798521101, -1.95547631e-08, -0.601966798),
-    [8] = CFrame.new(240.256897, 15.2399073, -174.516937, -0.0908729136, -1.02172869e-07, -0.995862484, 3.76559512e-08, 1, -1.0603349e-07, 0.995862484, -4.71357211e-08, -0.0908729136),
-}
-
--- ----- Compute cast pos from a spot CF -----
-local function GetCastPos(baseCF)
-    local forward = baseCF.LookVector * BRVS_CastForward
-    local castPos = baseCF.Position + forward
-    castPos = Vector3.new(castPos.X, BRVS_WaterHeight, castPos.Z) -- force Y = water level
-    return MakeVec3(castPos.X, castPos.Y, castPos.Z)
-end
-
--- ----- Teleport & cast helpers -----
-local function BRVS_TeleportTo(cf)
-    local char = BRVS_Player.Character or BRVS_Player.CharacterAdded:Wait()
-    local hrp = char:WaitForChild("HumanoidRootPart", 5)
-    if not hrp then return false end
-    hrp.CFrame = cf + Vector3.new(0, BRVS_TeleportYOffset, 0)
     return true
 end
 
-local function BRVS_SendFocus()
-    CharacterRE:FireServer("Focus", "FishRob")
-end
-
-local function BRVS_SendThrow(targetCF)
-    local pos = GetCastPos(targetCF)
-    FishingRE:FireServer("Throw", { Bait = BRVS_FishBait, Pos = pos })
-end
--- state
-local isFishing = false
-local pendingMarkerChange = false
-
-local function BRVS_DoFishingSequence(cf)
-    if isFishing then return end
-    isFishing = true
-	for _=1, 4 do
-        task.wait(0.1)
-		BRVS_SendFocus()
-    end
-    task.wait(0.2)
-    BRVS_SendThrow(cf)
-
-    -- pull + pout cycle
-    task.wait(0.3)
-    ResourceRE:FireServer("PULL", "FX/FX_Fish")
-
-    for _=1, 10 do
-        task.wait(0.2)
-        FishingRE:FireServer("POUT", { SUC = 1 })
-    end
-
-    isFishing = false
-
-    -- if marker changed during fishing → allow restart
-    if pendingMarkerChange then
-        pendingMarkerChange = false
-        BRVS_LastMarkerKey = nil -- force re-detect in loop
-    end
-end
-
--- ----- Pick the current FishPointN, then map to FishingSpotsN -----
-local function BRVS_FindActiveFishPointIndices()
-    -- returns an array of N numbers for FishPointN that currently have FX_Fish_Special
-    local result = {}
-    local FishPoints = workspace:FindFirstChild("FishPoints")
-    if not FishPoints then return result end
-
-    for _, fp in ipairs(FishPoints:GetChildren()) do
+-- New: only fish when FX_Fish_Special is present under any FishPoint
+local function BRVS_IsFishingActive()
+    local fishPoint = workspace:FindFirstChild("FishPoints")
+    if not fishPoint then return false end
+    for _, fp in ipairs(fishPoint:GetChildren()) do
         if fp:FindFirstChild("FX_Fish_Special", true) then
-            local name = fp.Name or ""
-            local n = tonumber(string.match(name, "FishPoint(%d+)"))
-            if n then table.insert(result, n) end
+            return true
         end
     end
-    return result
+    return false
 end
 
-local function BRVS_PickSpotByCurrentFishPoint()
-    local indices = BRVS_FindActiveFishPointIndices()
-    if #indices == 0 then return nil end
-    local n = indices[math.random(1, #indices)]
-    local cf = FishingSpots[n]
-    return cf
-end
-
--- Main Fish Loop
-
-local function BRVS_StartAutoFish()
-    if BRVS_FishThread then return end
-    BRVS_FishThread = task.spawn(function()
-        local lbl = BRVS_GetWeatherLabel()
-        BRVS_LastMarkerKey = nil
-
-        while BRVS_FishEnabled do
-            if lbl and not BRVS_IsMarkerYellow(lbl) then
-                local key = BRVS_GetMarkerKey(lbl)
-
-                if key ~= BRVS_LastMarkerKey then
-                    if isFishing then
-                        -- don’t interrupt, just flag it
-                        pendingMarkerChange = true
-                    else
-                        BRVS_LastMarkerKey = key
-                        BRVS_Rayfield:Notify({
-                            Title = "Auto Fish",
-                            Content = "New marker detected, fishing started",
-                            Duration = 0.5,
-                            Image = "fish"
-                        })
-                    end
-                end
-
-                -- loop while marker unchanged
-                while BRVS_FishEnabled and BRVS_GetMarkerKey(lbl) == BRVS_LastMarkerKey and not BRVS_IsMarkerYellow(lbl) do
-                    if not isFishing then
-                        local cf = BRVS_PickSpotByCurrentFishPoint()
-                        if cf and BRVS_TeleportTo(cf) then
-                            task.wait(0.2)
-                            BRVS_DoFishingSequence(cf)
-                        end
-                        task.wait(1.1)
-                    else
-                        task.wait(0.25) -- wait for current fishing to finish
-                    end
-                end
-            else
-                -- marker is yellow
-                task.wait(BRVS_PollInterval)
-            end
-        end
-        BRVS_FishThread = nil
-    end)
-end
-
--- === UI: bait selector + toggle ===
-BRVS_AutoTab:CreateDropdown({
-    Name = "Select Bait",
-    Options = {
-        "Cheese Bait (300) | FishingBait1",
-        "Fly Bait (10m) | FishingBait2",
-        "Fish Bait (800m) | FishingBait3"
-    },
-    CurrentOption = "Fish Bait (800m) | FishingBait3",
-    Flag = "FishBait",
-    Callback = function(option)
-    local selected = option
-    if type(option) == "table" then
-        selected = option[1]  -- take first choice if table
+-- One fishing cycle (focus -> throw -> pull/pout)
+local function BRVS_OneFishCycle()
+    if not BRVS_IsFishingActive() then
+        -- if BRVS_Rayfield then BRVS_Rayfield:Notify({Title="Auto Fish", Content="Fishing not active", Duration=0.5}) end
+        task.wait(0.8)
+        return
     end
 
-    if string.find(selected, "FishingBait1") then
-        BRVS_FishBait = "FishingBait1"
-    elseif string.find(selected, "FishingBait2") then
-        BRVS_FishBait = "FishingBait2"
-    elseif string.find(selected, "FishingBait3") then
-        BRVS_FishBait = "FishingBait3"
+    if not ensureSpot() then return end
+
+    -- Focus the rod a few times
+    for i = 1, 3 do
+        CharacterRE:FireServer("Focus", "FishRob")
+        task.wait(dFocus)
     end
 
-    BRVS_Rayfield:Notify({
-        Title = "Bait Selected",
-        Content = BRVS_FishBait,
-        Duration = 0.5,
-        Image = "check"
-    })
-end,
-})
+    -- Throw with selected/new bait
+    FishingRE:FireServer("Throw", { Bait = BRVS_FishBait, Pos = THROW_POS })
+    task.wait(dThrow)
 
+    -- (Optional) nudge the PULL effect once if your game expects it; harmless if not needed
+    pcall(function() ResourceRE:FireServer("PULL", "FX/FX_Fish") end)
+
+    -- Rapid “POUT” confirms to secure the catch
+    for i = 1, 10 do
+        FishingRE:FireServer("POUT", { SUC = 1 })
+        task.wait(dPull)
+    end
+end
+
+-- ================== Toggle wiring (replaces old StartAutoFish loop) ==========
+-- Remove/disable the old BRVS_StartAutoFish() thread and reuse your existing
+-- "Auto Fish" toggle to run the new method in a tight loop:
+BRVS_AutoTab:CreateSection("Auto Fish")
 BRVS_AutoTab:CreateToggle({
-    Name = "Auto Fish (auto teleport to spot event)",
+    Name = "Auto Fish (new method)",
     CurrentValue = false,
-    Flag = "AutoFish",
+    Flag = "AutoFish_New",
     Callback = function(on)
         BRVS_FishEnabled = on
         if on then
-            BRVS_StartAutoFish()
-            BRVS_Rayfield:Notify({ Title = "Auto Fish", Content = "Enabled", Duration = 0.5, Image = "fish" })
+            if BRVS_Rayfield then BRVS_Rayfield:Notify({ Title="Auto Fish", Content="Enabled (new)", Duration=0.5, Image="fish"}) end
+            task.spawn(function()
+                while BRVS_FishEnabled do
+                    BRVS_OneFishCycle()
+                    task.wait(0.3)
+                end
+            end)
         else
-            BRVS_LastMarkerKey = nil
-            BRVS_Rayfield:Notify({ Title = "Auto Fish", Content = "Disabled", Duration = 0.5, Image = "ban" })
+            if BRVS_Rayfield then BRVS_Rayfield:Notify({ Title="Auto Fish", Content="Disabled", Duration=0.5, Image="ban"}) end
         end
-    end,
+    end
 })
+
 -- =================== Util: Auto Recall ===================
 -- CharacterRE getter (kept)
 local function BRVS_GetCharacterRE()
@@ -1320,6 +1204,7 @@ end
 
 -- =================== TAB: Auto Recall ===================
 local BRVS_AutoRecallTab = BRVS_Window:CreateTab("Auto Recall", "monitor-dot")
+BRVS_AutoRecallTab:CreateSection("Auto Recall")
 BRVS_AutoRecallTab:CreateButton({
     Name = "Recall All",
     Callback = function()
@@ -1558,11 +1443,6 @@ local function BRVS_KindForPetInst(petInst, petData)
     return "Normal"
 end
 
--- local function BRVS_KindForPetInst(petInst)
---     local k = petInst:GetAttribute("BPT")
---     if k == "Fish" or k == "Normal" then return k end
---     return "Normal"
--- end
 
 -- Gather pets, compute GetPetProduce, sort DESC
 local function BRVS_CollectPetsWithProduce(rateMul)
