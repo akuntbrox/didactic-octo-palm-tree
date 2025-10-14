@@ -17,8 +17,8 @@ local BRVS_EGG_NAMES = {
 	"SnowbunnyEgg","PrismaticEgg","HyperEgg","DarkGoatyEgg",
 	"VoidEgg","BowserEgg","DemonEgg","RhinoRockEgg","CornEgg",
 	"BoneDragonEgg","UltraEgg","DinoEgg","FlyEgg","SaberCubEgg",
-	"UnicornEgg","AncientEgg","SeaDragonEgg","UnicornProEgg","GodzillaEgg",
-	"GeneralKongEgg","PegasusEgg",
+	"UnicornEgg","AncientEgg","SeaDragonEgg","UnicornProEgg",
+	"GodzillaEgg","GeneralKongEgg","PegasusEgg",
 }
 local BRVS_MUTATIONS = { "None","Golden","Diamond","Electirc","Fire","Dino","Snow" }
 
