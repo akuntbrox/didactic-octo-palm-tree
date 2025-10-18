@@ -28,9 +28,9 @@ local BRVS_MUTATION_OPTIONS = (function() local t={"Any"} for _,v in ipairs(BRVS
 
 -- Food options (multi-select)
 local BRVS_FOOD_OPTIONS = {
-	"Strawberry","Blueberry","Watermelon","Apple","Orange","Corn","Banana","Grape",
+	"VoltGinkgo","DeepseaPearlFruit","Durian","Pumpkin","Banana","Grape",
 	"Pear","Pineapple","DragonFruit","GoldMango","BloodstoneCycad","ColossalPinecone",
-	"VoltGinkgo","DeepseaPearlFruit","Durian", "Pumpkin",
+	"Strawberry","Blueberry","Watermelon","Apple","Orange","Corn",
 }
 
 --// World paths
