@@ -13,12 +13,12 @@ local BRVS_UserId = BRVS_Player.UserId
 
 --// Fixed lists (prefixed)
 local BRVS_EGG_NAMES = {
-	"BasicEgg","RareEgg","SuperRareEgg","EpicEgg","LegendEgg",
+	"CelesteEgg","RareEgg","SuperRareEgg","EpicEgg","LegendEgg",
 	"SnowbunnyEgg","PrismaticEgg","HyperEgg","DarkGoatyEgg",
 	"VoidEgg","BowserEgg","DemonEgg","RhinoRockEgg","CornEgg",
 	"BoneDragonEgg","UltraEgg","DinoEgg","FlyEgg","SaberCubEgg",
 	"UnicornEgg","AncientEgg","SeaDragonEgg","UnicornProEgg",
-	"GodzillaEgg","GeneralKongEgg","PegasusEgg","CelesteEgg",
+	"GodzillaEgg","GeneralKongEgg","PegasusEgg","BasicEgg",
 }
 local BRVS_MUTATIONS = { "Halloween","None","Golden","Diamond","Electirc","Fire","Dino","Snow" }
 
