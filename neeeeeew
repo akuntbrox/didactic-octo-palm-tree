@@ -13,14 +13,14 @@ local BRVS_UserId = BRVS_Player.UserId
 
 --// Fixed lists (prefixed)
 local BRVS_EGG_NAMES = {
-	"CelesteEgg","RareEgg","SuperRareEgg","EpicEgg","LegendEgg",
+	"CelesteEgg","DinoEgg","GodzillaEgg","GeneralKongEgg","LegendEgg",
 	"SnowbunnyEgg","PrismaticEgg","HyperEgg","DarkGoatyEgg",
 	"VoidEgg","BowserEgg","DemonEgg","RhinoRockEgg","CornEgg",
-	"BoneDragonEgg","UltraEgg","DinoEgg","FlyEgg","SaberCubEgg",
+	"BoneDragonEgg","UltraEgg","EpicEgg","FlyEgg","SaberCubEgg",
 	"UnicornEgg","AncientEgg","SeaDragonEgg","UnicornProEgg",
-	"GodzillaEgg","GeneralKongEgg","PegasusEgg","BasicEgg",
+	"RareEgg","SuperRareEgg","PegasusEgg","BasicEgg",
 }
-local BRVS_MUTATIONS = { "Halloween","None","Golden","Diamond","Electirc","Fire","Dino","Snow" }
+local BRVS_MUTATIONS = { "Halloween","Snow","Golden","Diamond","Electirc","Fire","Dino","None" }
 
 -- Rayfield display lists with explicit "Any"
 local BRVS_EGG_OPTIONS = (function() local t={"Any"} for _,v in ipairs(BRVS_EGG_NAMES) do table.insert(t,v) end return t end)()
