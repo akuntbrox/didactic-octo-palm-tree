@@ -13,14 +13,14 @@ local BRVS_UserId = BRVS_Player.UserId
 
 --// Fixed lists (prefixed)
 local BRVS_EGG_NAMES = {
-	"CelesteEgg","DinoEgg","GodzillaEgg","GeneralKongEgg","LegendEgg",
+	"DinoEgg","GodzillaEgg","GeneralKongEgg","CelesteEgg",
 	"SnowbunnyEgg","PrismaticEgg","HyperEgg","DarkGoatyEgg",
 	"VoidEgg","BowserEgg","DemonEgg","RhinoRockEgg","CornEgg",
 	"BoneDragonEgg","UltraEgg","EpicEgg","FlyEgg","SaberCubEgg",
 	"UnicornEgg","AncientEgg","SeaDragonEgg","UnicornProEgg",
-	"RareEgg","SuperRareEgg","PegasusEgg","BasicEgg",
+	"RareEgg","SuperRareEgg","PegasusEgg","LegendEgg","BasicEgg",
 }
-local BRVS_MUTATIONS = { "Halloween","Snow","Golden","Diamond","Electirc","Fire","Dino","None" }
+local BRVS_MUTATIONS = { "Halloween","Snow","Dino","Diamond","Electirc","Fire","Golden","None" }
 
 -- Rayfield display lists with explicit "Any"
 local BRVS_EGG_OPTIONS = (function() local t={"Any"} for _,v in ipairs(BRVS_EGG_NAMES) do table.insert(t,v) end return t end)()
@@ -28,7 +28,7 @@ local BRVS_MUTATION_OPTIONS = (function() local t={"Any"} for _,v in ipairs(BRVS
 
 -- Food options (multi-select)
 local BRVS_FOOD_OPTIONS = {
-	"VoltGinkgo","DeepseaPearlFruit","Durian","Pumpkin","Banana","Grape",
+	"VoltGinkgo","Pumpkin","Durian","DeepseaPearlFruit","Banana","Grape",
 	"Pear","Pineapple","DragonFruit","GoldMango","BloodstoneCycad","ColossalPinecone",
 	"Strawberry","Blueberry","Watermelon","Apple","Orange","Corn",
 }
@@ -466,6 +466,7 @@ function BRVS_BindFoodStock()
 				BRVS_FoodStock[child.Name] = tonumber(child.Value) or 0
 			end))
 		end
+
 	end
 
 	table.insert(BRVS_FoodStockConns, lst.ChildAdded:Connect(function(child)
@@ -1501,6 +1502,7 @@ function BRVS_AutoPlaceByProduceNow()
         warn("[BRVS] No eligible pets to place (must NOT have D and NOT BPV).")
         return 0
     end
+
 
     -- Collect free tiles (don't cache; world may change)
     local freeFarm, freeWater = {}, {}
