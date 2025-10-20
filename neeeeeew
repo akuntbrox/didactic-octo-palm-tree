@@ -407,38 +407,6 @@ local BRVS_Window = BRVS_Rayfield:CreateWindow({
 
 -- =================== TAB: Inventory (Paragraph-based) ===================
 local BRVS_InvTab = BRVS_Window:CreateTab("Inventory", "box")
-
--- Paragraph element for Food (above Eggs)
-local BRVS_InvFoodPara = BRVS_InvTab:CreateParagraph({ Title = "Food", Content = "loading..." })
-local BRVS_InvFoodConns = {}
-local function BRVS_ClearInvFoodConns() for _, c in ipairs(BRVS_InvFoodConns) do pcall(function() c:Disconnect() end) end BRVS_InvFoodConns = {} end
-local function BRVS_RebuildFoodText(assetInst)
-	if not BRVS_InvFoodPara then return end
-	if not assetInst then BRVS_InvFoodPara:Set({ Title = "Food", Content = "(none)" }); return end
-	local lines = {}
-	for _, name in ipairs(BRVS_FOOD_OPTIONS) do
-		local v = assetInst:GetAttribute(name)
-		if v ~= nil and v ~= false and v ~= 0 then
-			if type(v) == "number" then if v > 0 then table.insert(lines, string.format("• %s  ×%d", name, v)) end
-			else table.insert(lines, string.format("• %s", name)) end
-		end
-	end
-	table.sort(lines, function(a, b) return a:lower() < b:lower() end)
-	BRVS_InvFoodPara:Set({ Title = "Food", Content = (#lines == 0) and "(none)" or table.concat(lines, "\n") })
-end
-local function BRVS_BindInventoryFood()
-	BRVS_ClearInvFoodConns()
-	local pg = BRVS_Player:WaitForChild("PlayerGui")
-	local data = pg:WaitForChild("Data")
-	local asset = data:WaitForChild("Asset")
-	BRVS_RebuildFoodText(asset)
-	for _, name in ipairs(BRVS_FOOD_OPTIONS) do
-		table.insert(BRVS_InvFoodConns, asset:GetAttributeChangedSignal(name):Connect(function()
-			BRVS_RebuildFoodText(asset)
-		end))
-	end
-end
-
 -- Paragraph element for Eggs
 local BRVS_InvEggPara = BRVS_InvTab:CreateParagraph({ Title = "Eggs", Content = "loading..." })
 local BRVS_InvEggConns, BRVS_InvEggPerItemConns = {}, {}
@@ -502,6 +470,39 @@ local function BRVS_BindInventoryEggs()
 		BRVS_InvEggPerItemConns[child] = list
 	end
 end
+
+-- Paragraph element for Food (above Eggs)
+local BRVS_InvFoodPara = BRVS_InvTab:CreateParagraph({ Title = "Food", Content = "loading..." })
+local BRVS_InvFoodConns = {}
+local function BRVS_ClearInvFoodConns() for _, c in ipairs(BRVS_InvFoodConns) do pcall(function() c:Disconnect() end) end BRVS_InvFoodConns = {} end
+local function BRVS_RebuildFoodText(assetInst)
+	if not BRVS_InvFoodPara then return end
+	if not assetInst then BRVS_InvFoodPara:Set({ Title = "Food", Content = "(none)" }); return end
+	local lines = {}
+	for _, name in ipairs(BRVS_FOOD_OPTIONS) do
+		local v = assetInst:GetAttribute(name)
+		if v ~= nil and v ~= false and v ~= 0 then
+			if type(v) == "number" then if v > 0 then table.insert(lines, string.format("• %s  ×%d", name, v)) end
+			else table.insert(lines, string.format("• %s", name)) end
+		end
+	end
+	table.sort(lines, function(a, b) return a:lower() < b:lower() end)
+	BRVS_InvFoodPara:Set({ Title = "Food", Content = (#lines == 0) and "(none)" or table.concat(lines, "\n") })
+end
+local function BRVS_BindInventoryFood()
+	BRVS_ClearInvFoodConns()
+	local pg = BRVS_Player:WaitForChild("PlayerGui")
+	local data = pg:WaitForChild("Data")
+	local asset = data:WaitForChild("Asset")
+	BRVS_RebuildFoodText(asset)
+	for _, name in ipairs(BRVS_FOOD_OPTIONS) do
+		table.insert(BRVS_InvFoodConns, asset:GetAttributeChangedSignal(name):Connect(function()
+			BRVS_RebuildFoodText(asset)
+		end))
+	end
+end
+
+
 
 -- =================== TAB: Automation ===================
 local BRVS_AutoTab = BRVS_Window:CreateTab("Automation", "rotate-cw")
