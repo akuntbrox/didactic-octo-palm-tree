@@ -1157,8 +1157,8 @@ end
 BRVS_Rayfield:LoadConfiguration()
 
 BRVS_BindFoodStock()
-BRVS_BindInventoryFood()
 BRVS_BindInventoryEggs()
+BRVS_BindInventoryFood()
 BRVS_ApplyUltraLow()
 -- Sync state from saved flags
 do
