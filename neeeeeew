@@ -713,11 +713,24 @@ do
 
 	local BRVS_DinoEventRE = BRVS_ReplicatedStorage:WaitForChild("Remote"):WaitForChild("DinoEventRE")
 
-	local function BRVS_GetDinoTasksFolder()
+	local function BRVS_GetDinoTasksFolder(timeout)
+		timeout = timeout or 10
 		local pg = BRVS_Player:FindFirstChildOfClass("PlayerGui")
-		local data = pg and pg:FindFirstChild("Data")
-		local dino = data and data:FindFirstChild("DinoEventTaskData")
-		return dino and dino:FindFirstChild("Tasks") or nil
+		if not pg then return nil end
+		local data = pg:FindFirstChild("Data")
+		if not data then return nil end
+
+		local dino = data:FindFirstChild("DinoEventTaskData")
+		if not dino then
+			dino = data:WaitForChild("DinoEventTaskData", timeout)
+		end
+		if not dino then return nil end
+
+		local tasks = dino:FindFirstChild("Tasks")
+		if not tasks then
+			tasks = dino:WaitForChild("Tasks", timeout)
+		end
+		return tasks
 	end
 
 	local function BRVS_LoadResDino()
@@ -836,8 +849,14 @@ do
 		table.clear(BRVS_DinoLastFired)
 		BRVS_DinoClearConns()
 
-		local folder = BRVS_GetDinoTasksFolder()
-		if not folder then BRVS_Rayfield:Notify({ Title="Event", Content="Tasks folder not found", Duration=3, Image="alert-triangle" }); return end
+		local folder = BRVS_GetDinoTasksFolder(10)
+		if not folder then
+			BRVS_Rayfield:Notify({ Title="Event", Content="Tasks not ready, retrying…", Duration=2, Image="alert-triangle" })
+			task.delay(2, function()
+				if BRVS_DinoEnabled then BRVS_DinoStart() end
+			end)
+			return
+		end
 
 		for _, num in ipairs({ "1","2","3" }) do local node = folder:FindFirstChild(num); if node then BRVS_DinoHookTask(node) end end
 		table.insert(BRVS_DinoConns, folder.ChildAdded:Connect(function(ch) if ch.Name == "1" or ch.Name == "2" or ch.Name == "3" then BRVS_DinoHookTask(ch) end end))
@@ -1155,7 +1174,17 @@ else
 end
 
 BRVS_Rayfield:LoadConfiguration()
-
+task.defer(function()
+  local tries = 0
+  while tries < 5 do
+    if BRVS_DinoToggle and BRVS_DinoToggle.CurrentValue then
+      BRVS_DinoStart() -- will now wait/retry if data isn't ready
+      break
+    end
+    tries = tries + 1
+    task.wait(0.5)
+  end
+end)
 BRVS_BindFoodStock()
 BRVS_BindInventoryEggs()
 BRVS_BindInventoryFood()
