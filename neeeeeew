@@ -14,10 +14,6 @@ local BRVS_UserId = BRVS_Player.UserId
 local BRVS_Candy =
 	BRVS_Player:WaitForChild("PlayerGui"):WaitForChild("OverlaySafe"):WaitForChild("Right"):WaitForChild("Candy")
 
-if BRVS_Candy then
-	task.wait(7)
-end
-
 --// Fixed lists (prefixed)
 local BRVS_EGG_NAMES = {
 	"DinoEgg",
@@ -1268,29 +1264,49 @@ do
 		end
 		return false
 	end
-	-- === Helpers: open UI + click center of a GUI element ===
-	local BRVS_VIM = game:GetService("VirtualInputManager")
 
-	local function BRVS_ClickGuiCenter(guiObj)
-		if not guiObj then
+	local function BRVS_SelectFishingBait(targetName)
+		-- Wait for the fishing UI to exist
+		local pg = BRVS_Player:WaitForChild("PlayerGui")
+		local screen = pg:WaitForChild("ScreenFishing", 5)
+		if not screen then
 			return false
 		end
-		-- If it’s a button, try the straightforward activation
-		if guiObj:IsA("GuiButton") then
-			pcall(function()
-				guiObj:Activate()
-			end)
-			return true
+
+		local baits = screen:WaitForChild("Baits", 3)
+		local sf = baits and baits:WaitForChild("ScrollingFrame", 3)
+		if not sf then
+			return false
 		end
-		-- Otherwise, click screen coords at its center
-		local pos = guiObj.AbsolutePosition
-		local size = guiObj.AbsoluteSize
-		local x = pos.X + size.X / 2
-		local y = pos.Y + size.Y / 2
-		pcall(function()
-			BRVS_VIM:SendMouseButtonEvent(x, y, 0, true, game, 0)
-			BRVS_VIM:SendMouseButtonEvent(x, y, 0, false, game, 0)
-		end)
+
+		-- All bait names
+		local allNames = { "FishingBait1", "FishingBait2", "FishingBait3" }
+
+		for _, name in ipairs(allNames) do
+			local btn = sf:FindFirstChild(name)
+			if btn then
+				local stroke = btn:FindFirstChild("UIStroke") or btn:FindFirstChildOfClass("UIStroke")
+				-- Turn off all highlights first
+				if stroke then
+					pcall(function()
+						stroke.Enabled = false
+					end)
+				end
+
+				-- Activate and highlight ONLY the selected bait
+				if name == targetName and btn:IsA("GuiButton") then
+					pcall(function()
+						btn:Activate()
+					end) -- ✅ works even if UI blocks mouse
+					if stroke then
+						pcall(function()
+							stroke.Enabled = true
+						end)
+					end
+				end
+			end
+		end
+
 		return true
 	end
 
@@ -1321,6 +1337,9 @@ do
 		if not screen then
 			return
 		end
+
+		-- after UI open, before throw
+		BRVS_SelectFishingBait("FishingBait3")
 
 		-- Click the middle of the bait button: ScreenFishing.Baits.ScrollingFrame.FishingBait3
 		local baits = screen:WaitForChild("Baits", 3)
