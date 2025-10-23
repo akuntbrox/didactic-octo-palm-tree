@@ -761,7 +761,7 @@ local BRVS_Window = BRVS_Rayfield:CreateWindow({
 	LoadingTitle = "Loading y0ur stuff",
 	LoadingSubtitle = "by HrafnHub",
 	ShowText = "UI HrafnHub",
-	Theme = "Dark Blue",
+	Theme = "DarkBlue",
 	ToggleUIKeybind = "K",
 	DisableRayfieldPrompts = true,
 	DisableBuildWarnings = true,
@@ -1265,51 +1265,6 @@ do
 		return false
 	end
 
-	local function BRVS_SelectFishingBait(targetName)
-		-- Wait for the fishing UI to exist
-		local pg = BRVS_Player:WaitForChild("PlayerGui")
-		local screen = pg:WaitForChild("ScreenFishing", 5)
-		if not screen then
-			return false
-		end
-
-		local baits = screen:WaitForChild("Baits", 3)
-		local sf = baits and baits:WaitForChild("ScrollingFrame", 3)
-		if not sf then
-			return false
-		end
-
-		-- All bait names
-		local allNames = { "FishingBait1", "FishingBait2", "FishingBait3" }
-
-		for _, name in ipairs(allNames) do
-			local btn = sf:FindFirstChild(name)
-			if btn then
-				local stroke = btn:FindFirstChild("UIStroke") or btn:FindFirstChildOfClass("UIStroke")
-				-- Turn off all highlights first
-				if stroke then
-					pcall(function()
-						stroke.Enabled = false
-					end)
-				end
-
-				-- Activate and highlight ONLY the selected bait
-				if name == targetName and btn:IsA("GuiButton") then
-					pcall(function()
-						btn:Activate()
-					end) -- ✅ works even if UI blocks mouse
-					if stroke then
-						pcall(function()
-							stroke.Enabled = true
-						end)
-					end
-				end
-			end
-		end
-
-		return true
-	end
-
 	-- === UPDATED one cycle ===
 	local function BRVS_OneFishCycle()
 		-- Short-circuit if fishing area inactive or not at the spot (your original checks)
@@ -1320,8 +1275,6 @@ do
 		if not ensureSpot() then
 			return
 		end
-
-		BRVS_SelectFishingBait("FishingBait3")
 
 		-- Your existing cadence: reinforce focus a few times, then Throw, Pull, POUT loop
 		for _ = 1, 3 do
