@@ -1332,13 +1332,6 @@ do
 			return
 		end
 
-		-- Open the Fishing UI (Focus + Start) and wait it in
-		local screen = BRVS_OpenFishingUI()
-		if not screen then
-			return
-		end
-
-		-- after UI open, before throw
 		BRVS_SelectFishingBait("FishingBait3")
 
 		-- Your existing cadence: reinforce focus a few times, then Throw, Pull, POUT loop
