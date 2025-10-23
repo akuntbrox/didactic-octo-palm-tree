@@ -753,15 +753,56 @@ local function BRVS_HasFoodStock(name)
 end
 
 --========================================================
+local BRVS_Theme = {
+	TextColor = Color3.fromRGB(255, 180, 100), -- warm orange text
+	PlaceholderColor = Color3.fromRGB(180, 130, 90),
+
+	Background = Color3.fromRGB(15, 10, 20), -- deep violet-black
+	Topbar = Color3.fromRGB(25, 15, 35),
+	Shadow = Color3.fromRGB(8, 5, 12),
+
+	NotificationBackground = Color3.fromRGB(20, 15, 25),
+	NotificationActionsBackground = Color3.fromRGB(255, 145, 60),
+
+	TabBackground = Color3.fromRGB(50, 30, 60),
+	TabStroke = Color3.fromRGB(80, 40, 90),
+	TabBackgroundSelected = Color3.fromRGB(255, 120, 50),
+	TabTextColor = Color3.fromRGB(230, 180, 255),
+	SelectedTabTextColor = Color3.fromRGB(20, 10, 10),
+
+	ElementBackground = Color3.fromRGB(25, 15, 35),
+	ElementBackgroundHover = Color3.fromRGB(35, 20, 45),
+	SecondaryElementBackground = Color3.fromRGB(18, 12, 25),
+	ElementStroke = Color3.fromRGB(70, 40, 90),
+	SecondaryElementStroke = Color3.fromRGB(40, 20, 60),
+
+	SliderBackground = Color3.fromRGB(90, 50, 130),
+	SliderProgress = Color3.fromRGB(255, 120, 50),
+	SliderStroke = Color3.fromRGB(255, 160, 90),
+
+	ToggleBackground = Color3.fromRGB(25, 20, 35),
+	ToggleEnabled = Color3.fromRGB(255, 120, 50),
+	ToggleDisabled = Color3.fromRGB(90, 70, 90),
+	ToggleEnabledStroke = Color3.fromRGB(255, 160, 80),
+	ToggleDisabledStroke = Color3.fromRGB(100, 80, 110),
+	ToggleEnabledOuterStroke = Color3.fromRGB(70, 40, 20),
+	ToggleDisabledOuterStroke = Color3.fromRGB(50, 30, 60),
+
+	DropdownSelected = Color3.fromRGB(40, 25, 50),
+	DropdownUnselected = Color3.fromRGB(30, 20, 40),
+
+	InputBackground = Color3.fromRGB(25, 15, 35),
+	InputStroke = Color3.fromRGB(70, 40, 90),
+}
 -- Rayfield UI (prefixed locals)
 local BRVS_Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 local BRVS_Window = BRVS_Rayfield:CreateWindow({
 	Name = "Build A Zoo [HALLOWEEN] | HrafnHub",
 	Icon = "egg",
-	LoadingTitle = "Loading y0ur stuff",
-	LoadingSubtitle = "by HrafnHub",
+	LoadingTitle = "Summoning spooky fishes...",
+	LoadingSubtitle = "by HrafnHub 🎃",
 	ShowText = "UI HrafnHub",
-	Theme = "DarkBlue",
+	Theme = BRVS_Theme,
 	ToggleUIKeybind = "K",
 	DisableRayfieldPrompts = true,
 	DisableBuildWarnings = true,
