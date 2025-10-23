@@ -11,6 +11,11 @@ local BRVS_Workspace        = game:GetService("Workspace")
 local BRVS_Player = BRVS_Players.LocalPlayer
 local BRVS_UserId = BRVS_Player.UserId
 
+local BRVS_Candy =
+	BRVS_Player:WaitForChild("PlayerGui"):WaitForChild("OverlaySafe"):WaitForChild("Right"):WaitForChild("Candy")
+
+if BRVS_Candy then task.wait(7) end
+
 --// Fixed lists (prefixed)
 local BRVS_EGG_NAMES = {
 	"DinoEgg","GodzillaEgg","GeneralKongEgg","CelesteEgg",
