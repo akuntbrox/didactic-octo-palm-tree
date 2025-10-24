@@ -1163,11 +1163,10 @@ local function BRVS_ClaimMyPetsOnce(ratePerSec)
 
 	local reByUID = {}
 	for _, model in ipairs(workspacePets:GetChildren()) do
-		if model:IsA("Model") then
-			local root = model:FindFirstChild("RootPart")
-			local re = root and root:FindFirstChild("RE")
-			if re and re.FireServer then
-				reByUID[model.Name] = re
+		if model:IsA("Part") then
+			local root = model:FindFirstChild("RE")
+			if root and root.FireServer then
+				reByUID[model.Name] = root
 			end
 		end
 	end
