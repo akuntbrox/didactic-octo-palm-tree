@@ -156,7 +156,28 @@ local function interactWith(tile)
 end
 
 -- 5) ===== WindUI window & base panels =======================================
-WindUI:SetTheme("Dark")
+WindUI:AddTheme({
+	Name = "Halloween Night",
+
+	Accent = WindUI:Gradient({
+		["0"] = { Color = Color3.fromHex("#1a0b1e"), Transparency = 0 }, -- deep witch purple
+		-- ["40"] = { Color = Color3.fromHex("#3b0a45"), Transparency = 0 }, -- richer violet
+		-- ["80"] = { Color = Color3.fromHex("#ff6a00"), Transparency = 0 }, -- pumpkin glow
+		["100"] = { Color = Color3.fromHex("#ff8900"), Transparency = 0 }, -- brighter edge
+	}, {
+		Rotation = 35,
+	}),
+
+	Dialog = Color3.fromHex("#0f0f14"), -- cauldron black
+	Outline = Color3.fromHex("#ff8f3c"), -- ember orange
+	Text = Color3.fromHex("#ffe9c6"), -- candlelight
+	Placeholder = Color3.fromHex("#9a7f6a"), -- faded parchment
+	Background = Color3.fromHex("#0a0a0f"), -- midnight
+	Button = Color3.fromHex("#2a2230"), -- shadowed plum
+	Icon = Color3.fromHex("#ff7a1c"), -- jack-o’-lantern
+})
+
+WindUI:SetTheme("Halloween Night")
 WindUI.TransparencyValue = 0.15
 
 local Window = WindUI:CreateWindow({
@@ -165,7 +186,7 @@ local Window = WindUI:CreateWindow({
 	Author = "Your Island Helper",
 	Folder = "UtilsFarm_WindUI",
 	Size = UDim2.fromOffset(560, 350),
-	Theme = "Dark",
+	Theme = "Halloween Night",
 	HidePanelBackground = false,
 	NewElements = false,
 })
@@ -174,19 +195,19 @@ Window:CreateTopbarButton("theme", "moon", function()
 	WindUI:SetTheme(WindUI:GetCurrentTheme() == "Dark" and "Light" or "Dark")
 	WindUI:Notify({ Title = "Theme", Content = "Current: " .. WindUI:GetCurrentTheme(), Duration = 2 })
 end, 999)
-local GiftSection = Window:Section({ Title = "Gifting", Opened = true })
+local GiftSection = Window:Section({ Title = "Automation", Opened = true })
 local Sections = {
+	Eggs = Window:Section({ Title = "Eggs", Opened = false }),
 	Main = Window:Section({ Title = "Farming", Opened = false }),
-	Eggs = Window:Section({ Title = "Eggs", Opened = true }),
-	Diag = Window:Section({ Title = "Diagnostics", Opened = true }),
-	Settings = Window:Section({ Title = "Settings", Opened = true }),
+	Diag = Window:Section({ Title = "Diagnostics", Opened = false }),
+	Settings = Window:Section({ Title = "Settings", Opened = false }),
 }
 
 local Tabs = {
 	Farm = Sections.Main:Tab({ Title = "Controls", Icon = "tractor" }),
 	Info = Sections.Main:Tab({ Title = "Info", Icon = "info" }),
-	Pet = Sections.Eggs:Tab({ Title = "Pet Egg Placement", Icon = "egg" }),
-	Fish = Sections.Eggs:Tab({ Title = "Fish Egg Placement", Icon = "fish" }),
+	Pet = Sections.Eggs:Tab({ Title = "🥚 Pet Egg Placement" }),
+	Fish = Sections.Eggs:Tab({ Title = "🐟 Fish Egg Placement" }),
 	Diag = Sections.Diag:Tab({ Title = "Tools", Icon = "wrench" }),
 	App = Sections.Settings:Tab({ Title = "Appearance", Icon = "brush" }),
 }
@@ -1220,8 +1241,81 @@ end
 
 -- ---------- WindUI: Gift UI ----------
 
-local GiftTab = GiftSection:Tab({ Title = "Auto Gift", Icon = "gift" })
+local GiftTab = GiftSection:Tab({ Title = "🎁 Auto Gift" })
+-- redeemCodes
+local Koders = GiftSection:Tab({ Title = "🔓 Auto Redeem" })
 
+-- Refresh Lists
+GiftTab:Button({
+	Title = "Refresh Lists",
+	Icon = "refresh-cw",
+	Callback = function()
+		-- Players
+		playerOpts, playerMap = ScanPlayers()
+		if playerDD.Refresh then
+			playerDD:Refresh((#playerOpts > 0) and playerOpts or { "No players…" })
+		end
+		if playerDD.Select and playerOpts[1] then
+			playerDD:Select(playerOpts[1])
+			selectedPlayer = playerOpts[1]
+		end
+
+		-- Pets
+		petOptions = ScanGiftablePets()
+		if petDD.Refresh then
+			petDD:Refresh(buildLabeled(petOptions))
+		end
+		if petDD.Select and petOptions[1] then
+			petDD:Select(("%s  (x%d)"):format(petOptions[1].key, petOptions[1].count))
+			selectedPetKey = petOptions[1].key
+		end
+
+		-- Eggs
+		eggOptions = ScanGiftableEggs()
+		if eggDD.Refresh then
+			eggDD:Refresh(buildLabeled(eggOptions))
+		end
+		if eggDD.Select and eggOptions[1] then
+			eggDD:Select(("%s  (x%d)"):format(eggOptions[1].key, eggOptions[1].count))
+			selectedEggKey = eggOptions[1].key
+		end
+
+		-- Foods
+		foods = ScanGiftableFoods()
+		local fl = foodLabels(foods)
+		if foodDD.Refresh then
+			foodDD:Refresh(fl)
+		end
+		if foodDD.Select and fl[1] then
+			foodDD:Select(fl[1])
+		end
+		selectedFoodKey = foods[1] and foods[1].food or nil
+
+		-- Mutation list for current selection
+		if itemMode ~= "Food" then
+			local packs = (itemMode == "Pet") and petOptions or eggOptions
+			local currentKey = (itemMode == "Pet") and selectedPetKey or selectedEggKey
+			for _, pack in ipairs(packs) do
+				if pack.key == currentKey then
+					local list = mergeMutations(pack.mutations or {})
+					if mutationDD.Refresh then
+						mutationDD:Refresh(list)
+					end
+					if mutationDD.Select then
+						mutationDD:Select(list[1])
+					end
+					selectedMutation = "Any"
+					break
+				end
+			end
+		end
+		if mutationDD.SetVisible then
+			mutationDD:SetVisible(itemMode ~= "Food")
+		end
+
+		WindUI:Notify({ Title = "Gift", Content = "Lists refreshed.", Duration = 2 })
+	end,
+})
 -- Merge helper: Any + None + FIXED_MUTATIONS + dynamic mutations from inventory
 local function mergeMutations(dynamic)
 	local seen, out = {}, {}
@@ -1473,78 +1567,6 @@ local qtyBox = GiftTab:Input({
 	end,
 })
 
--- Refresh Lists
-GiftTab:Button({
-	Title = "Refresh Lists",
-	Icon = "refresh-cw",
-	Callback = function()
-		-- Players
-		playerOpts, playerMap = ScanPlayers()
-		if playerDD.Refresh then
-			playerDD:Refresh((#playerOpts > 0) and playerOpts or { "No players…" })
-		end
-		if playerDD.Select and playerOpts[1] then
-			playerDD:Select(playerOpts[1])
-			selectedPlayer = playerOpts[1]
-		end
-
-		-- Pets
-		petOptions = ScanGiftablePets()
-		if petDD.Refresh then
-			petDD:Refresh(buildLabeled(petOptions))
-		end
-		if petDD.Select and petOptions[1] then
-			petDD:Select(("%s  (x%d)"):format(petOptions[1].key, petOptions[1].count))
-			selectedPetKey = petOptions[1].key
-		end
-
-		-- Eggs
-		eggOptions = ScanGiftableEggs()
-		if eggDD.Refresh then
-			eggDD:Refresh(buildLabeled(eggOptions))
-		end
-		if eggDD.Select and eggOptions[1] then
-			eggDD:Select(("%s  (x%d)"):format(eggOptions[1].key, eggOptions[1].count))
-			selectedEggKey = eggOptions[1].key
-		end
-
-		-- Foods
-		foods = ScanGiftableFoods()
-		local fl = foodLabels(foods)
-		if foodDD.Refresh then
-			foodDD:Refresh(fl)
-		end
-		if foodDD.Select and fl[1] then
-			foodDD:Select(fl[1])
-		end
-		selectedFoodKey = foods[1] and foods[1].food or nil
-
-		-- Mutation list for current selection
-		if itemMode ~= "Food" then
-			local packs = (itemMode == "Pet") and petOptions or eggOptions
-			local currentKey = (itemMode == "Pet") and selectedPetKey or selectedEggKey
-			for _, pack in ipairs(packs) do
-				if pack.key == currentKey then
-					local list = mergeMutations(pack.mutations or {})
-					if mutationDD.Refresh then
-						mutationDD:Refresh(list)
-					end
-					if mutationDD.Select then
-						mutationDD:Select(list[1])
-					end
-					selectedMutation = "Any"
-					break
-				end
-			end
-		end
-		if mutationDD.SetVisible then
-			mutationDD:SetVisible(itemMode ~= "Food")
-		end
-
-		WindUI:Notify({ Title = "Gift", Content = "Lists refreshed.", Duration = 2 })
-	end,
-})
-
 -- Runner
 GiftTab:Toggle({
 	Title = "Start Auto Gift",
@@ -1666,7 +1688,7 @@ GiftTab:Toggle({
 })
 
 GiftTab:Button({
-	Title = "Stop",
+	Title = "Stop Auto Gift",
 	Icon = "square",
 	Variant = "Tertiary",
 	Callback = function()
@@ -1676,11 +1698,128 @@ GiftTab:Button({
 })
 
 -- ========================= end Auto Gift ====================================
+-- tiny sanitizer (trim, strip control chars, BOM/ZW)
+local function _sanitize_code(s)
+	s = tostring(s or "")
+	s = s:gsub("^%s+", ""):gsub("%s+$", "")
+	s = s:gsub("[%z\1-\31\127]", "")
+	s = s:gsub("[\226\128\139\239\187\191]", "")
+	return s
+end
 
+-- fetch comma-separated codes from a URL (e.g. your GitHub raw file)
+local function fetchCodesFrom(url)
+	local list, seen = {}, {}
+	local ok, data = pcall(function()
+		return game:HttpGet(url)
+	end)
+	if not ok or not data then
+		return list
+	end
+	for code in string.gmatch(data, "([^,]+)") do
+		code = _sanitize_code(code)
+		if code ~= "" and not seen[code] then
+			seen[code] = true
+			table.insert(list, code)
+		end
+	end
+	return list
+end
+
+-- safe child resolver with array path
+local function _wait_path(root, path)
+	local cur = root
+	for _, name in ipairs(path) do
+		cur = cur:WaitForChild(name)
+		if not cur then
+			return nil
+		end
+	end
+	return cur
+end
+
+-- resolve the Redemption remote; override path via opts.remotePath
+local function getRedemptionRemote(opts)
+	opts = opts or {}
+	local path = opts.remotePath or { "Remote", "RedemptionCodeRE" }
+	local rs = game:GetService("ReplicatedStorage")
+	return _wait_path(rs, path)
+end
+
+-- one fire with pcall; returns true/false, err
+local function _fireUseCode(remote, code)
+	local args = { { event = "usecode", code = code } }
+	local ok, err = pcall(function()
+		remote:FireServer(unpack(args))
+	end)
+	if not ok then
+		return false, (err or "fire failed")
+	end
+	return true
+end
+
+-- Redeem a list of codes with pacing + soft retries
+-- opts: { delay=0.5, retries=0..2, remotePath={...}, onProgress=function(i,total,code,ok,err) end }
+local function redeemCodes(codes, opts)
+	opts = opts or {}
+	local delay = tonumber(opts.delay) or 0.5
+	local retries = math.max(0, math.floor(tonumber(opts.retries) or 0))
+
+	if not codes or #codes == 0 then
+		WindUI:Notify({ Title = "Codes", Content = "No codes to redeem." })
+		return 0, 0
+	end
+
+	local remote = getRedemptionRemote(opts)
+	if not remote then
+		WindUI:Notify({ Title = "Codes", Content = "Redemption remote not found.", Icon = "ban" })
+		return 0, #codes
+	end
+
+	local okCount, failCount = 0, 0
+	for i, code in ipairs(codes) do
+		local ok, err = _fireUseCode(remote, code)
+		local left = retries
+		while (not ok) and left > 0 do
+			task.wait(0.25)
+			ok, err = _fireUseCode(remote, code)
+			left = left - 1
+		end
+
+		if ok then
+			okCount = okCount + 1
+		else
+			failCount = failCount + 1
+		end
+		if type(opts.onProgress) == "function" then
+			pcall(opts.onProgress, i, #codes, code, ok, err)
+		end
+		task.wait(delay)
+	end
+
+	WindUI:Notify({
+		Title = "Redeem Finished",
+		Content = ("Codes: %d | OK: %d | Failed: %d"):format(#codes, okCount, failCount),
+		Duration = 4,
+	})
+
+	return okCount, failCount
+end
+local codes =
+	fetchCodesFrom("https://raw.githubusercontent.com/akuntbrox/didactic-octo-palm-tree/refs/heads/main/code.txt")
+
+Koders:Button({
+	Title = "Reedem ALL Code",
+	Icon = "play",
+	Variant = "Tertiary",
+	Callback = function()
+		redeemCodes(codes, {})
+	end,
+})
 -- 9) ===== Boot & cleanup =====================================================
 refreshTiles()
 redrawInfo()
-WindUI:Notify({ Title = "Utils Farm", Content = "UI loaded. Use Diagnostics if auto-place fails.", Duration = 4 })
+-- WindUI:Notify({ Title = "Utils Farm", Content = "UI loaded. Use Diagnostics if auto-place fails.", Duration = 4 })
 
 print("[UtilsFarm] Press RightShift to hide/show UI. Top-center button appears when hidden.")
 
