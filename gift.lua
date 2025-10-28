@@ -1068,12 +1068,11 @@ end
 -- FOODS: from PlayerGui.Data.Asset
 -- === Giftable Foods (Configuration-based) ===================================
 local DEFAULT_FOODS = {
-	"Strawberry",
-	"Blueberry",
-	"Watermelon",
-	"Apple",
-	"Orange",
-	"Corn",
+	"VoltGinkgo",
+	"CandyCorn",
+	"Pumpkin",
+	"Durian",
+	"DeepseaPearlFruit",
 	"Banana",
 	"Grape",
 	"Pear",
@@ -1082,9 +1081,12 @@ local DEFAULT_FOODS = {
 	"GoldMango",
 	"BloodstoneCycad",
 	"ColossalPinecone",
-	"VoltGinkgo",
-	"DeepseaPearlFruit",
-	"Durian",
+	"Strawberry",
+	"Blueberry",
+	"Watermelon",
+	"Apple",
+	"Orange",
+	"Corn",
 }
 
 local function _toSet(list)
