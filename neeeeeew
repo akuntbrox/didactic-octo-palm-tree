@@ -92,6 +92,7 @@ local BRVS_ART_FOLDER = workspace:WaitForChild("Art")
 local BRVS_EGGS_FOLDER = BRVS_ReplicatedStorage:WaitForChild("Eggs")
 
 --// Remotes/config
+local BRVS_token = game:GetService("ReplicatedStorage").Time
 local BRVS_BUYEGG_REMOTE_PATH = { "Remote", "CharacterRE" } -- ReplicatedStorage.Remote.CharacterRE
 local BRVS_BUYEGG_ACTION = "BuyEgg"
 local BRVS_AUTO_BUY_COOLDOWN = 2 -- seconds per-egg debounce
@@ -1132,8 +1133,11 @@ local BRVS_PetDelaySlider = BRVS_AutoTab:CreateSlider({
 		BRVS_PetCollectInterval = tonumber(val) or BRVS_PetCollectInterval
 	end,
 })
+
 local function BRVS_ClaimMyPetsOnce(ratePerSec)
 	ratePerSec = math.max(1, tonumber(ratePerSec) or 15)
+	local token = bit32.bxor(BRVS_UserId, BRVS_token:GetAttribute("s"), BRVS_token.Value)
+
 	local interval = 1 / ratePerSec
 	local pg = BRVS_Player:FindFirstChildOfClass("PlayerGui")
 	if not pg then
@@ -1182,7 +1186,7 @@ local function BRVS_ClaimMyPetsOnce(ratePerSec)
 				if now < nextTime then
 					task.wait(nextTime - now)
 				end
-				re:FireServer("Claim")
+				re:FireServer("Claim", token)
 				nextTime = nextTime + interval
 			end
 		end
@@ -1223,6 +1227,7 @@ local function BRVS_ClaimMyPetsOnce(ratePerSec)
 		end
 	end
 end
+
 local BRVS_PetToggle = BRVS_AutoTab:CreateToggle({
 	Name = "Auto Collect Pet",
 	CurrentValue = false,
@@ -1692,6 +1697,7 @@ do
 		local pg = lp and lp:FindFirstChildOfClass("PlayerGui")
 		local data = pg and pg:FindFirstChild("Data")
 		local pets = data and data:FindFirstChild("Pets")
+		local takens = bit32.bxor(BRVS_UserId, BRVS_token:GetAttribute("s"), BRVS_token.Value)
 		if not pets then
 			return
 		end
@@ -1726,8 +1732,17 @@ do
 			if typeof(uid) == "string" and #uid > 0 then
 				local bpv = toNum(child:GetAttribute("BPV"))
 				if hasTruthyD(child) and (bpv == nil) then
-					re:FireServer("Del", uid)
-					task.wait(0.1)
+					-- BRVS_GetCharacterRE:FireServer("Del", uid, takens)
+					local manuke = {
+						"Del",
+						uid,
+						takens,
+					}
+					game:GetService("ReplicatedStorage")
+						:FindFirstChild("Remote")
+						:FindFirstChild("CharacterRE")
+						:FireServer(unpack(manuke))
+					task.wait(0.2)
 				end
 			end
 		end
