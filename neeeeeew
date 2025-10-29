@@ -16,9 +16,10 @@ local BRVS_Candy =
 
 --// Fixed lists (prefixed)
 local BRVS_EGG_NAMES = {
-	"DinoEgg",
+	"MetroGiraffeEgg",
 	"GodzillaEgg",
 	"GeneralKongEgg",
+	"DinoEgg",
 	"CelesteEgg",
 	"SnowbunnyEgg",
 	"PrismaticEgg",
@@ -64,19 +65,20 @@ end)()
 
 -- Food options (multi-select)
 local BRVS_FOOD_OPTIONS = {
+	"FrankenKiwi",
 	"VoltGinkgo",
 	"CandyCorn",
 	"Pumpkin",
 	"Durian",
 	"DeepseaPearlFruit",
-	"Banana",
-	"Grape",
 	"Pear",
 	"Pineapple",
 	"DragonFruit",
 	"GoldMango",
 	"BloodstoneCycad",
 	"ColossalPinecone",
+	"Banana",
+	"Grape",
 	"Strawberry",
 	"Blueberry",
 	"Watermelon",
