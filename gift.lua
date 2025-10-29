@@ -1732,7 +1732,7 @@ end
 local function _wait_path(root, path)
 	local cur = root
 	for _, name in ipairs(path) do
-		cur = cur:WaitForChild(name)
+		cur = cur:FindFirstChild(name)
 		if not cur then
 			return nil
 		end
