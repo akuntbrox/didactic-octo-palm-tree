@@ -800,7 +800,7 @@ local BRVS_Theme = {
 -- Rayfield UI (prefixed locals)
 local BRVS_Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 local BRVS_Window = BRVS_Rayfield:CreateWindow({
-	Name = "Build A Zoo [HALLOWEEN] | HrafnHub",
+	Name = "Build A Zoo [🎃HW UPD 32] | HrafnHub",
 	Icon = "egg",
 	LoadingTitle = "Summoning spooky fishes...",
 	LoadingSubtitle = "by HrafnHub 🎃",
