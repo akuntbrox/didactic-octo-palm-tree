@@ -1135,10 +1135,35 @@ local BRVS_PetDelaySlider = BRVS_AutoTab:CreateSlider({
 })
 
 local function BRVS_ClaimMyPetsOnce(ratePerSec)
-	ratePerSec = math.max(1, tonumber(ratePerSec) or 15)
-	local token = bit32.bxor(BRVS_UserId, BRVS_token:GetAttribute("s"), BRVS_token.Value)
-
+	ratePerSec = math.max(1, tonumber(ratePerSec) or 20)
 	local interval = 1 / ratePerSec
+
+	-- helper to compute the current token
+	local function computeToken()
+		local s = tonumber(BRVS_token:GetAttribute("s")) or 0
+		local v = tonumber(BRVS_token.Value) or 0
+		return bit32.bxor(BRVS_UserId, s, v)
+	end
+
+	-- cached token that updates automatically
+	local token = computeToken()
+	local tokenVersion = 0
+
+	-- listen for rotation (Attribute or Value change)
+	local function refreshToken()
+		token = computeToken()
+		tokenVersion = tokenVersion + 1
+		-- print("[BRVS] Token rotated, new version:", tokenVersion)
+	end
+
+	BRVS_token:GetAttributeChangedSignal("s"):Connect(refreshToken)
+	BRVS_token.Changed:Connect(function(prop)
+		if prop == "Value" then
+			refreshToken()
+		end
+	end)
+
+	-- everything else same setup...
 	local pg = BRVS_Player:FindFirstChildOfClass("PlayerGui")
 	if not pg then
 		return
@@ -1169,23 +1194,30 @@ local function BRVS_ClaimMyPetsOnce(ratePerSec)
 
 	local reByUID = {}
 	for _, model in ipairs(workspacePets:GetChildren()) do
-		if model:IsA("Part") then
-			local root = model:FindFirstChild("RE")
-			if root and root.FireServer then
-				reByUID[model.Name] = root
-			end
+		local re = model:FindFirstChild("RE", true) -- deep find just in case
+		if re and re.FireServer then
+			reByUID[model.Name] = re
 		end
 	end
 
 	local function firePaced(queue)
 		local nextTime = os.clock()
-		for i = 1, #queue do
-			local re = queue[i]
+		local localVersion = tokenVersion
+
+		for _, re in ipairs(queue) do
 			if re and re.FireServer then
 				local now = os.clock()
 				if now < nextTime then
 					task.wait(nextTime - now)
 				end
+
+				-- check token still current before firing
+				if localVersion ~= tokenVersion then
+					-- print("[BRVS] Token rotated mid-batch; restarting remaining queue.")
+					task.defer(firePaced, queue) -- requeue remaining pets with fresh token
+					return
+				end
+
 				re:FireServer("Claim", token)
 				nextTime = nextTime + interval
 			end
@@ -1196,35 +1228,12 @@ local function BRVS_ClaimMyPetsOnce(ratePerSec)
 	for uid in pairs(owned) do
 		local re = reByUID[uid]
 		if re then
-			queue[#queue + 1] = re
+			table.insert(queue, re)
 		end
-	end
-	if #queue > 0 then
-		firePaced(queue)
 	end
 
-	local missing = {}
-	for uid in pairs(owned) do
-		if not reByUID[uid] then
-			missing[#missing + 1] = uid
-		end
-	end
-	if #missing > 0 then
-		task.wait(0.2)
-		local retryQueue = {}
-		for _, uid in ipairs(missing) do
-			local model = workspacePets:FindFirstChild(uid)
-			if model and model:IsA("Model") then
-				local root = model:FindFirstChild("RootPart")
-				local re = root and root:FindFirstChild("RE")
-				if re and re.FireServer then
-					retryQueue[#retryQueue + 1] = re
-				end
-			end
-		end
-		if #retryQueue > 0 then
-			firePaced(retryQueue)
-		end
+	if #queue > 0 then
+		firePaced(queue)
 	end
 end
 
@@ -1688,19 +1697,34 @@ do
 	local BRVS_AutoRecallTab = BRVS_Window:CreateTab("Auto Recall", "monitor-dot")
 	BRVS_AutoRecallTab:CreateSection("Auto Recall")
 
+	-- Fix: recall all (exclude BPV) requiring D=true-ish, with token-rotation handling
 	local function BRVS_RecallAll_ExcludeBPV_RequireD_PG()
+		-- Get RemoteEvent once (your helper should return CharacterRE)
 		local re = BRVS_GetCharacterRE()
 		if not (re and re:IsA("RemoteEvent")) then
+			warn("[BRVS] CharacterRE not available or wrong class.")
 			return
 		end
-		local lp = BRVS_Players.LocalPlayer
-		local pg = lp and lp:FindFirstChildOfClass("PlayerGui")
-		local data = pg and pg:FindFirstChild("Data")
-		local pets = data and data:FindFirstChild("Pets")
-		local takens = bit32.bxor(BRVS_UserId, BRVS_token:GetAttribute("s"), BRVS_token.Value)
+
+		-- Player/Data/Pets nodes
+		local lp = BRVS_Players and BRVS_Players.LocalPlayer
+		if not lp then
+			return
+		end
+		local pg = lp:FindFirstChildOfClass("PlayerGui")
+		if not pg then
+			return
+		end
+		local data = pg:FindFirstChild("Data")
+		if not data then
+			return
+		end
+		local pets = data:FindFirstChild("Pets")
 		if not pets then
 			return
 		end
+
+		-- Helpers
 		local function toNum(x)
 			if typeof(x) == "number" then
 				return x
@@ -1710,6 +1734,7 @@ do
 			end
 			return nil
 		end
+
 		local function hasTruthyD(obj)
 			local d = obj:GetAttribute("D")
 			if d == nil then
@@ -1723,30 +1748,96 @@ do
 			end
 			if typeof(d) == "string" then
 				d = d:lower()
-				return d == "1" or d == "true"
+				return (d == "1") or (d == "true") or (d == "yes") or (d == "on")
 			end
+			-- any other non-nil types treated as truthy
 			return true
 		end
+
+		-- Token handling (rotation-aware)
+		local function computeToken()
+			local s = tonumber(BRVS_token:GetAttribute("s")) or 0
+			local v = tonumber(BRVS_token.Value) or 0
+			return bit32.bxor(BRVS_UserId, s, v)
+		end
+
+		local token = computeToken()
+		local tokenVersion = 0
+		local function refreshToken()
+			token = computeToken()
+			tokenVersion = tokenVersion + 1
+			-- print("[BRVS] Token rotated to version", tokenVersion)
+		end
+
+		-- Listen for both salt and value changes
+		if BRVS_token and BRVS_token.GetAttributeChangedSignal then
+			BRVS_token:GetAttributeChangedSignal("s"):Connect(refreshToken)
+		end
+		if BRVS_token and BRVS_token.Changed then
+			BRVS_token.Changed:Connect(function(prop)
+				if prop == "Value" then
+					refreshToken()
+				end
+			end)
+		end
+
+		-- Build recall queue (uids that meet D=true-ish and BPV is nil)
+		local queue = {}
 		for _, child in ipairs(pets:GetChildren()) do
-			local uid = child.Name
+			local uid = child and child.Name
 			if typeof(uid) == "string" and #uid > 0 then
 				local bpv = toNum(child:GetAttribute("BPV"))
 				if hasTruthyD(child) and (bpv == nil) then
-					-- BRVS_GetCharacterRE:FireServer("Del", uid, takens)
-					local manuke = {
-						"Del",
-						uid,
-						takens,
-					}
-					game:GetService("ReplicatedStorage")
-						:FindFirstChild("Remote")
-						:FindFirstChild("CharacterRE")
-						:FireServer(unpack(manuke))
-					task.wait(0.2)
+					table.insert(queue, uid)
 				end
 			end
 		end
+		if #queue == 0 then
+			return
+		end
+
+		-- Pace settings
+		local RATE_PER_SEC = 50 -- tune this: 10-20 is usually safe
+		local interval = 1 / math.max(1, RATE_PER_SEC)
+
+		-- Fire loop with mid-batch rotation guard
+		local function fireQueue(uids)
+			local nextTime = os.clock()
+			local localVersion = tokenVersion
+
+			for i = 1, #uids do
+				local now = os.clock()
+				if now < nextTime then
+					task.wait(nextTime - now)
+				end
+
+				-- If token changed mid-run, restart remaining with fresh token
+				if localVersion ~= tokenVersion then
+					-- print("[BRVS] Token rotated mid-recall; resuming with fresh token.")
+					local remaining = table.create(#uids - i + 1)
+					for j = i, #uids do
+						remaining[#remaining + 1] = uids[j]
+					end
+					task.defer(fireQueue, remaining)
+					return
+				end
+
+				-- Validate RemoteEvent each send (re might be replaced in rare cases)
+				if not (re and re.FireServer) then
+					warn("[BRVS] CharacterRE became unavailable; aborting.")
+					return
+				end
+
+				-- Send recall (Del) for this uid with current token
+				re:FireServer("Del", uids[i], token)
+
+				nextTime = nextTime + interval
+			end
+		end
+
+		fireQueue(queue)
 	end
+
 	BRVS_AutoRecallTab:CreateButton({ Name = "Recall All", Callback = BRVS_RecallAll_ExcludeBPV_RequireD_PG })
 
 	----------------------------------------------------------------
