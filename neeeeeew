@@ -1135,7 +1135,7 @@ local BRVS_PetDelaySlider = BRVS_AutoTab:CreateSlider({
 })
 
 local function BRVS_ClaimMyPetsOnce(ratePerSec)
-	ratePerSec = math.max(1, tonumber(ratePerSec) or 20)
+	ratePerSec = math.max(1, tonumber(ratePerSec) or 50)
 	local interval = 1 / ratePerSec
 
 	-- helper to compute the current token
