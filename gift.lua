@@ -181,9 +181,9 @@ WindUI:SetTheme("Halloween Night")
 WindUI.TransparencyValue = 0.15
 
 local Window = WindUI:CreateWindow({
-	Title = "Utils Farm",
+	Title = "Build A Zoo [Halloween]",
 	Icon = "sprout",
-	Author = "Your Island Helper",
+	Author = "HrafnHub",
 	Folder = "UtilsFarm_WindUI",
 	Size = UDim2.fromOffset(560, 350),
 	Theme = "Halloween Night",
@@ -258,7 +258,7 @@ Tabs.Farm:Dropdown({
 	Callback = function(v)
 		GRID = v
 		currentIndex = 0
-		WindUI:Notify({ Title = "Grid", Content = "Active: " .. GRID, Duration = 2 })
+		-- WindUI:Notify({ Title = "Grid", Content = "Active: " .. GRID, Duration = 2 })
 	end,
 })
 
@@ -817,7 +817,7 @@ local DSTDD = Tabs.Diag:Dropdown({
 	Value = "vector.create",
 	Callback = function(v)
 		DST_FORMAT = v
-		WindUI:Notify({ Title = "DST", Content = "Now using " .. v, Duration = 2 })
+		-- WindUI:Notify({ Title = "DST", Content = "Now using " .. v, Duration = 2 })
 	end,
 })
 
@@ -826,7 +826,7 @@ Tabs.Diag:Toggle({
 	Value = false,
 	Callback = function(on)
 		DEBUG = on
-		WindUI:Notify({ Title = "Debug", Content = on and "ON" or "OFF", Duration = 2 })
+		-- WindUI:Notify({ Title = "Debug", Content = on and "ON" or "OFF", Duration = 2 })
 	end,
 })
 
@@ -1068,11 +1068,12 @@ end
 -- FOODS: from PlayerGui.Data.Asset
 -- === Giftable Foods (Configuration-based) ===================================
 local DEFAULT_FOODS = {
-	"VoltGinkgo",
-	"CandyCorn",
-	"Pumpkin",
-	"Durian",
-	"DeepseaPearlFruit",
+	"Strawberry",
+	"Blueberry",
+	"Watermelon",
+	"Apple",
+	"Orange",
+	"Corn",
 	"Banana",
 	"Grape",
 	"Pear",
@@ -1081,12 +1082,9 @@ local DEFAULT_FOODS = {
 	"GoldMango",
 	"BloodstoneCycad",
 	"ColossalPinecone",
-	"Strawberry",
-	"Blueberry",
-	"Watermelon",
-	"Apple",
-	"Orange",
-	"Corn",
+	"VoltGinkgo",
+	"DeepseaPearlFruit",
+	"Durian",
 }
 
 local function _toSet(list)
@@ -1246,7 +1244,7 @@ end
 local GiftTab = GiftSection:Tab({ Title = "🎁 Auto Gift" })
 -- redeemCodes
 local Koders = GiftSection:Tab({ Title = "🔓 Auto Redeem" })
-
+local FeedTab = GiftSection:Tab({ Title = "🍽️ Auto Feed" })
 -- Refresh Lists
 GiftTab:Button({
 	Title = "Refresh Lists",
@@ -1750,9 +1748,9 @@ end
 
 -- one fire with pcall; returns true/false, err
 local function _fireUseCode(remote, code)
-	local args = { { event = "usecode", code = code } }
+	local args = { event = "usecode", code = code }
 	local ok, err = pcall(function()
-		remote:FireServer(unpack(args))
+		remote:FireServer(args)
 	end)
 	if not ok then
 		return false, (err or "fire failed")
@@ -1818,6 +1816,259 @@ Koders:Button({
 		redeemCodes(codes, {})
 	end,
 })
+
+-- =========================
+-- 🍽️ Auto Feed (Per-Big-Pet with Summary on Top)
+-- =========================
+
+-- Reuse your existing Players / ReplicatedStorage / LocalPlayer from top of file
+local Remote = ReplicatedStorage:WaitForChild("Remote")
+local CharacterRE = Remote:WaitForChild("CharacterRE")
+local PetRE = Remote:WaitForChild("PetRE")
+
+-- Fixed food list
+local FOOD_ARGS = {
+	"Pear",
+	"Pineapple",
+	"DragonFruit",
+	"GoldMango",
+	"BloodstoneCycad",
+	"ColossalPinecone",
+	"VoltGinkgo",
+	"DeepseaPearlFruit",
+	"Durian",
+}
+
+-- Feed settings
+local FOCUS_TO_FEED_DELAY = 0.2
+local FEED_LOOP_DELAY = 0.6
+
+-- Create tab
+
+-- Helpers
+local function getPetsFolder()
+	return LocalPlayer.PlayerGui:FindFirstChild("Data"):FindFirstChild("Pets")
+end
+
+local function scanBigPetsTop3()
+	local petsFolder = getPetsFolder()
+	if not petsFolder then
+		return {}
+	end
+
+	local list = {}
+
+	for _, pet in ipairs(petsFolder:GetChildren()) do
+		local di = pet:FindFirstChild("DI")
+		if di then
+			local bp = di:GetAttribute("BP")
+			if bp then
+				-- Convert BP string to number if needed
+				if typeof(bp) == "string" then
+					bp = tonumber(bp)
+				end
+
+				if typeof(bp) == "number" and bp > 0 then
+					table.insert(list, { inst = pet, uid = pet.Name, bp = bp })
+				end
+			end
+		end
+	end
+
+	-- Sort ascending by BP value
+	table.sort(list, function(a, b)
+		return (a.bp or 0) < (b.bp or 0)
+	end)
+
+	-- Return top 3
+	local out = {}
+	for i = 1, math.min(3, #list) do
+		out[i] = list[i]
+	end
+
+	return out
+end
+
+-- State
+local bigPets = scanBigPetsTop3()
+local running = { [1] = false, [2] = false, [3] = false }
+local chosenFood = { [1] = FOOD_ARGS[1], [2] = FOOD_ARGS[1], [3] = FOOD_ARGS[1] }
+local ddBySlot = {}
+local summaryPara
+
+-- Utility
+local function uidForSlot(slot)
+	return bigPets[slot] and bigPets[slot].uid or nil
+end
+
+-- ===== Summary paragraph (top of tab) =====
+local function updateSummary()
+	local lines = {}
+	for i = 1, 3 do
+		table.insert(
+			lines,
+			string.format("- BP %d Auto : %s | Food : %s", i, running[i] and "ON" or "OFF", chosenFood[i] or "None")
+		)
+	end
+	local text = table.concat(lines, "\n")
+	if summaryPara and summaryPara.SetDesc then
+		summaryPara:SetDesc(text)
+	else
+		summaryPara = FeedTab:Paragraph({
+			Title = "Summary",
+			Desc = text,
+			Image = "clipboard-list",
+		})
+	end
+end
+
+-- ===== Feeding logic =====
+local function feedIfNeeded(slot)
+	local uid = uidForSlot(slot)
+	if not uid then
+		return
+	end
+	local pet = getPetsFolder():FindFirstChild(uid)
+	if not pet then
+		return
+	end
+	if pet:GetAttribute("Feed") then
+		return
+	end
+
+	local food = chosenFood[slot]
+	if not food then
+		return
+	end
+
+	pcall(function()
+		CharacterRE:FireServer("Focus", food)
+	end)
+
+	task.wait(FOCUS_TO_FEED_DELAY)
+
+	pcall(function()
+		PetRE:FireServer("Feed", uid)
+	end)
+
+	task.wait(FOCUS_TO_FEED_DELAY)
+
+	pcall(function()
+		CharacterRE:FireServer("Focus")
+	end)
+
+	setStatus(("Fed Big Pet %d (%s) with %s"):format(slot, uid, food))
+end
+
+local function runLoop(slot)
+	running[slot] = true
+	task.spawn(function()
+		while running[slot] do
+			feedIfNeeded(slot)
+			task.wait(FEED_LOOP_DELAY)
+		end
+		setStatus("Idle")
+	end)
+end
+
+-- ===== Build per-slot controls =====
+local function slotCaption(slot)
+	local p = bigPets[slot]
+	if not p then
+		return ("Big Pet %d"):format(slot)
+	end
+	return ("Big Pet %d  |  UID: %s  |  BP: %s"):format(slot, p.uid, tostring(p.bp))
+end
+
+local function addSlotRow(slot)
+	FeedTab:Paragraph({ Title = slotCaption(slot), Desc = "Pick a food, then toggle Auto Feed.", Image = "utensils" })
+
+	local dd = FeedTab:Dropdown({
+		Title = ("Big Pet %d Food"):format(slot),
+		Values = FOOD_ARGS,
+		Value = chosenFood[slot],
+		Callback = function(v)
+			chosenFood[slot] = v
+			updateSummary()
+		end,
+	})
+	ddBySlot[slot] = dd
+
+	FeedTab:Toggle({
+		Title = ("Big Pet %d: Auto Feed"):format(slot),
+		Value = false,
+		Callback = function(on)
+			running[slot] = on
+			if on then
+				if not uidForSlot(slot) then
+					WindUI:Notify({
+						Title = "Auto Feed",
+						Content = ("No pet bound to slot %d (refresh pets)."):format(slot),
+						Duration = 2,
+						Icon = "x",
+					})
+					running[slot] = false
+					updateSummary()
+					return
+				end
+				runLoop(slot)
+			end
+			updateSummary()
+		end,
+	})
+end
+
+-- Add summary first (top)
+updateSummary()
+
+-- Then add pet slots
+addSlotRow(1)
+addSlotRow(2)
+addSlotRow(3)
+
+-- Buttons and slider
+FeedTab:Button({
+	Title = "Refresh Pets (by BP)",
+	Icon = "users",
+	Callback = function()
+		bigPets = scanBigPetsTop3()
+		WindUI:Notify({
+			Title = "Auto Feed",
+			Content = string.format(
+				"Assigned:\n#1 %s | #2 %s | #3 %s",
+				uidForSlot(1) or "nil",
+				uidForSlot(2) or "nil",
+				uidForSlot(3) or "nil"
+			),
+			Duration = 3,
+		})
+		updateSummary()
+	end,
+})
+
+FeedTab:Slider({
+	Title = "Loop Delay (s)",
+	Value = { Min = 0.2, Max = 2, Default = FEED_LOOP_DELAY },
+	Step = 0.05,
+	Callback = function(v)
+		FEED_LOOP_DELAY = tonumber(v) or FEED_LOOP_DELAY
+	end,
+})
+
+FeedTab:Button({
+	Title = "Stop All Feeding",
+	Icon = "square",
+	Variant = "Tertiary",
+	Callback = function()
+		running[1], running[2], running[3] = false, false, false
+		setStatus("Idle")
+		updateSummary()
+	end,
+})
+
+-- Initialize summary one more time after building UI
+updateSummary()
+
 -- 9) ===== Boot & cleanup =====================================================
 refreshTiles()
 redrawInfo()
