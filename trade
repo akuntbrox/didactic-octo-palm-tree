@@ -279,6 +279,19 @@ local function focusUID(uid)
 	return true
 end
 
+local function clearHand()
+	-- sanity checks
+	if not CharacterRE or CharacterRE.ClassName ~= "RemoteEvent" then
+		warn("[AutoTrade] CharacterRE missing or not a RemoteEvent:", CharacterRE and CharacterRE.ClassName)
+		return false
+	end
+
+	local args = { "Focus" }
+	print("[AutoTrade] Focus ->")
+	CharacterRE:FireServer(unpack(args))
+	return true
+end
+
 -- === TRADE DECODE/DECISION ===
 local function findTradeCore(root)
 	if typeof(root) ~= "table" then
@@ -432,6 +445,7 @@ local function afterTradeTeleportAndContinue()
 
 	-- Wait 2 seconds before next trade
 	task.wait(2)
+	clearHand()
 
 	-- Re-scan lowest-produce pet
 	local uid = chooseLowestProduceUID()
