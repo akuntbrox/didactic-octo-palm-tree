@@ -23,7 +23,7 @@ local PAUSE_WHEN_ZERO = true
 local bargainedOnce = false -- remember that we already bargained once
 
 -- NEW:
-local TRADE_RESTART_DELAY = 5 -- small delay before attempting next trade
+local TRADE_RESTART_DELAY = 3 -- small delay before attempting next trade
 local REQUEST_TRADE_ON_START = true -- send reqtrade after we move/focus (helps looping)
 local AUTO_TELEPORT_HOME_ON_ACCEPT = false -- keep false for unlimited loop
 
@@ -397,7 +397,7 @@ local function decideAndAct(payload)
 		end
 		acceptedOrDeclined = true
 		currentlyTrading = false
-		scheduleNextTrade()
+		afterTradeTeleportAndContinue()
 		return
 	end
 
@@ -411,7 +411,7 @@ local function decideAndAct(payload)
 		end
 		acceptedOrDeclined = true
 		currentlyTrading = false
-		scheduleNextTrade()
+		afterTradeTeleportAndContinue()
 		return
 	end
 
@@ -425,44 +425,30 @@ local function decideAndAct(payload)
 end
 
 -- Use the existing getCountLabel() + isCapReached()
-local function scheduleNextTrade()
-	task.delay(TRADE_RESTART_DELAY, function()
-		if paused then
-			print("[AutoTrade] Paused (0/x) — waiting to refill before continuing.")
-			return
+local function afterTradeTeleportAndContinue()
+	task.spawn(function()
+		-- Teleport Home after each trade
+		print("[AutoTrade] Teleporting Home after trade...")
+		CharacterRE:FireServer("Teleport", "Home")
+
+		-- Wait 2 seconds before next trade
+		task.wait(2)
+
+		-- Re-scan lowest-produce pet
+		local uid = chooseLowestProduceUID()
+		if uid then
+			focusUID(uid)
+			task.wait(0.2)
+		else
+			warn("[AutoTrade] No valid pet UID found after teleport.")
 		end
 
-		local label = getCountLabel()
-		if not label then
-			print("[AutoTrade] Could not find count label.")
-			return
-		end
-
-		local x, y = parseXY(label.Text)
-		if not x or not y then
-			print("[AutoTrade] Invalid trade count format.")
-			return
-		end
-
-		-- 🟢 New rule: trade again if capacity remains
-		if x > 0 then
-			print(string.format("[AutoTrade] Still have capacity (%d/%d) → rescanning pets.", x, y))
-
-			-- 🐾 Re-scan for the lowest produce pet
-			local uid = chooseLowestProduceUID()
-			if uid then
-				focusUID(uid)
-				task.wait(0.2)
-			else
-				warn("[AutoTrade] No valid pet UID found during rescan.")
-			end
-
-			-- 🧭 Move to trade zone and restart trade
+		-- Teleport to TradeZone and start next trade
+		if not paused then
 			teleportToTradeZone5()
 			startCycle()
 		else
-			print("[AutoTrade] 0/x detected — pausing until refill.")
-			paused = true
+			print("[AutoTrade] Paused (0/x); waiting to refill.")
 		end
 	end)
 end
@@ -498,7 +484,7 @@ TradeRE.OnClientEvent:Connect(function(payload)
 			TradeRE:FireServer({ event = "decline" })
 			acceptedOrDeclined = true
 			currentlyTrading = false
-			scheduleNextTrade() -- NEW: queue the next trade
+			afterTradeTeleportAndContinue() -- NEW: queue the next trade
 			return
 		end
 
@@ -536,7 +522,7 @@ TradeRE.OnClientEvent:Connect(function(payload)
 		end
 		acceptedOrDeclined = true
 		currentlyTrading = false
-		scheduleNextTrade()
+		afterTradeTeleportAndContinue()
 	end
 end)
 
