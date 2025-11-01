@@ -23,7 +23,7 @@ local PAUSE_WHEN_ZERO = true
 local bargainedOnce = false -- remember that we already bargained once
 
 -- NEW:
-local TRADE_RESTART_DELAY = 2 -- small delay before attempting next trade
+local TRADE_RESTART_DELAY = 5 -- small delay before attempting next trade
 local REQUEST_TRADE_ON_START = true -- send reqtrade after we move/focus (helps looping)
 local AUTO_TELEPORT_HOME_ON_ACCEPT = false -- keep false for unlimited loop
 
