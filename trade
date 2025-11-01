@@ -426,31 +426,29 @@ end
 
 -- Use the existing getCountLabel() + isCapReached()
 local function afterTradeTeleportAndContinue()
-	task.spawn(function()
-		-- Teleport Home after each trade
-		print("[AutoTrade] Teleporting Home after trade...")
-		CharacterRE:FireServer("Teleport", "Home")
+	-- Teleport Home after each trade
+	print("[AutoTrade] Teleporting Home after trade...")
+	CharacterRE:FireServer("Teleport", "Home")
 
-		-- Wait 2 seconds before next trade
-		task.wait(2)
+	-- Wait 2 seconds before next trade
+	task.wait(2)
 
-		-- Re-scan lowest-produce pet
-		local uid = chooseLowestProduceUID()
-		if uid then
-			focusUID(uid)
-			task.wait(0.2)
-		else
-			warn("[AutoTrade] No valid pet UID found after teleport.")
-		end
+	-- Re-scan lowest-produce pet
+	local uid = chooseLowestProduceUID()
+	if uid then
+		focusUID(uid)
+		task.wait(0.2)
+	else
+		warn("[AutoTrade] No valid pet UID found after teleport.")
+	end
 
-		-- Teleport to TradeZone and start next trade
-		if not paused then
-			teleportToTradeZone5()
-			startCycle()
-		else
-			print("[AutoTrade] Paused (0/x); waiting to refill.")
-		end
-	end)
+	-- Teleport to TradeZone and start next trade
+	if not paused then
+		teleportToTradeZone5()
+		startCycle()
+	else
+		print("[AutoTrade] Paused (0/x); waiting to refill.")
+	end
 end
 
 TradeRE.OnClientEvent:Connect(function(payload)
