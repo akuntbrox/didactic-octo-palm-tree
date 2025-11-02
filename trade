@@ -436,12 +436,12 @@ local function decideAndAct(payload)
 	end
 
 	-- Rule 3: my value > trader value -> bargain once
-	if myVal > traderVal and not bargainedOnce then
-		task.wait(0.2)
-		print("[AutoTrade] MyValue > TraderValue → BARGAIN once")
-		bargainedOnce = true
-		TradeRE:FireServer({ event = "bargain" })
-	end
+	-- if myVal > traderVal and not bargainedOnce then
+	-- 	task.wait(0.2)
+	-- 	print("[AutoTrade] MyValue > TraderValue → BARGAIN once")
+	-- 	bargainedOnce = true
+	-- 	TradeRE:FireServer({ event = "bargain" })
+	-- end
 end
 
 -- Use the existing getCountLabel() + isCapReached()
