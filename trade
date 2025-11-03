@@ -21,7 +21,10 @@ local DECISION_DELAY = 1.0
 local TELEPORT_Y_OFFSET = -1
 local PAUSE_WHEN_ZERO = true
 local bargainedOnce = false -- remember that we already bargained once
-local homedWhileWaiting = false  -- NEW: teleport-home-once debounce
+local homedWhileWaiting = false -- NEW: teleport-home-once debounce
+
+local auto =
+	LocalPlayer:WaitForChild("PlayerGui"):WaitForChild("OverlaySafe"):WaitForChild("Right"):WaitForChild("Candy")
 
 -- NEW:
 local TRADE_RESTART_DELAY = 3 -- small delay before attempting next trade
@@ -558,36 +561,44 @@ end
 
 startCycle()
 task.spawn(function()
-    local label = getCountLabel()
-    label:GetPropertyChangedSignal("Text"):Connect(function()
-        local full = isCapReached(label.Text)
-        if full then
-            -- Full (10/10): reset debounce and go
-            if homedWhileWaiting then
-                print("[AutoTrade] Refilled to full → resuming.")
-            end
-            homedWhileWaiting = false
-            startCycle()
-        else
-            -- Not full: Home once, then wait until full
-            if not homedWhileWaiting then
-                homedWhileWaiting = true
-                print("[AutoTrade] Not full (" .. tostring(label.Text) .. ") → teleporting Home while waiting for 10/10.")
-                CharacterRE:FireServer("Teleport", "Home")
-            end
-        end
-    end)
+	local label = getCountLabel()
+	label:GetPropertyChangedSignal("Text"):Connect(function()
+		local full = isCapReached(label.Text)
+		if full then
+			-- Full (10/10): reset debounce and go
+			if homedWhileWaiting then
+				print("[AutoTrade] Refilled to full → resuming.")
+			end
+			homedWhileWaiting = false
+			startCycle()
+		else
+			-- Not full: Home once, then wait until full
+			if not homedWhileWaiting then
+				homedWhileWaiting = true
+				print(
+					"[AutoTrade] Not full ("
+						.. tostring(label.Text)
+						.. ") → teleporting Home while waiting for 10/10."
+				)
+				CharacterRE:FireServer("Teleport", "Home")
+			end
+		end
+	end)
 
-    -- Initial kick
-    local full = isCapReached(label.Text)
-    if full then
-        homedWhileWaiting = false
-        startCycle()
-    else
-        if not homedWhileWaiting then
-            homedWhileWaiting = true
-            print("[AutoTrade] Startup: not full (" .. tostring(label.Text) .. ") → teleporting Home while waiting for 10/10.")
-            CharacterRE:FireServer("Teleport", "Home")
-        end
-    end
+	-- Initial kick
+	local full = isCapReached(label.Text)
+	if full then
+		homedWhileWaiting = false
+		startCycle()
+	else
+		if not homedWhileWaiting then
+			homedWhileWaiting = true
+			print(
+				"[AutoTrade] Startup: not full ("
+					.. tostring(label.Text)
+					.. ") → teleporting Home while waiting for 10/10."
+			)
+			CharacterRE:FireServer("Teleport", "Home")
+		end
+	end
 end)
