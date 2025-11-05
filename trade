@@ -520,7 +520,7 @@ afterTradeTeleportAndContinue = function()
 	task.spawn(function()
 		print("[AutoTrade] Teleporting Home after trade...")
 		safeFire(CharacterRE, "Teleport", "Home")
-		task.wait(2)
+		task.wait(3.5)
 
 		local uid = chooseLowestProduceUID()
 		if uid then
