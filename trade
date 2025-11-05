@@ -21,7 +21,7 @@ local DECISION_DELAY = 1.0
 local TELEPORT_Y_OFFSET = -1
 local PAUSE_WHEN_ZERO = true
 local bargainedOnce = false -- remember that we already bargained once
-local homedWhileWaiting = false -- NEW: teleport-home-once debounce
+local homedWhileWaiting = true -- NEW: teleport-home-once debounce
 
 local auto =
 	LocalPlayer:WaitForChild("PlayerGui"):WaitForChild("OverlaySafe"):WaitForChild("Right"):WaitForChild("Candy")
