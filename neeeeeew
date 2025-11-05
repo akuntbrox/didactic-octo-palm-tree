@@ -16,8 +16,10 @@ local BRVS_Candy =
 
 --// Fixed lists (prefixed)
 local BRVS_EGG_NAMES = {
+	"BiteForceSharkEgg",
 	"MetroGiraffeEgg",
 	"GodzillaEgg",
+	"HalloweenEgg",
 	"GeneralKongEgg",
 	"DinoEgg",
 	"CelesteEgg",
@@ -756,54 +758,65 @@ local function BRVS_HasFoodStock(name)
 end
 
 --========================================================
+-- ARCTIC CIRCUIT (cold, readable over fills)
 local BRVS_Theme = {
-	TextColor = Color3.fromRGB(255, 180, 100), -- warm orange text
-	PlaceholderColor = Color3.fromRGB(180, 130, 90),
+	-- Text
+	TextColor = Color3.fromRGB(210, 230, 255), -- frosty silver-blue (not pure white)
+	PlaceholderColor = Color3.fromRGB(135, 150, 175),
 
-	Background = Color3.fromRGB(15, 10, 20), -- deep violet-black
-	Topbar = Color3.fromRGB(25, 15, 35),
-	Shadow = Color3.fromRGB(8, 5, 12),
+	-- Surfaces
+	Background = Color3.fromRGB(6, 10, 16), -- ink-blue black
+	Topbar = Color3.fromRGB(10, 14, 22),
+	Shadow = Color3.fromRGB(2, 3, 6),
 
-	NotificationBackground = Color3.fromRGB(20, 15, 25),
-	NotificationActionsBackground = Color3.fromRGB(255, 145, 60),
+	-- Notifications
+	NotificationBackground = Color3.fromRGB(12, 16, 26),
+	NotificationActionsBackground = Color3.fromRGB(0, 170, 255), -- cool call-to-action
 
-	TabBackground = Color3.fromRGB(50, 30, 60),
-	TabStroke = Color3.fromRGB(80, 40, 90),
-	TabBackgroundSelected = Color3.fromRGB(255, 120, 50),
-	TabTextColor = Color3.fromRGB(230, 180, 255),
-	SelectedTabTextColor = Color3.fromRGB(20, 10, 10),
+	-- Tabs
+	TabBackground = Color3.fromRGB(18, 24, 36),
+	TabStroke = Color3.fromRGB(40, 60, 100),
+	TabBackgroundSelected = Color3.fromRGB(0, 185, 255), -- neon ice
+	TabTextColor = Color3.fromRGB(180, 205, 240),
+	SelectedTabTextColor = Color3.fromRGB(8, 12, 18),
 
-	ElementBackground = Color3.fromRGB(25, 15, 35),
-	ElementBackgroundHover = Color3.fromRGB(35, 20, 45),
-	SecondaryElementBackground = Color3.fromRGB(18, 12, 25),
-	ElementStroke = Color3.fromRGB(70, 40, 90),
-	SecondaryElementStroke = Color3.fromRGB(40, 20, 60),
+	-- Elements
+	ElementBackground = Color3.fromRGB(14, 20, 30),
+	ElementBackgroundHover = Color3.fromRGB(22, 30, 44),
+	SecondaryElementBackground = Color3.fromRGB(10, 14, 24),
+	ElementStroke = Color3.fromRGB(35, 80, 130),
+	SecondaryElementStroke = Color3.fromRGB(28, 60, 100),
 
-	SliderBackground = Color3.fromRGB(90, 50, 130),
-	SliderProgress = Color3.fromRGB(255, 120, 50),
-	SliderStroke = Color3.fromRGB(255, 160, 90),
+	-- Sliders  (keep fill bright but not pure to preserve text contrast)
+	SliderBackground = Color3.fromRGB(22, 28, 44),
+	SliderProgress = Color3.fromRGB(0, 190, 235), -- electric aqua (slightly darker than pure cyan)
+	SliderStroke = Color3.fromRGB(120, 210, 255), -- gentle glow edge
 
-	ToggleBackground = Color3.fromRGB(25, 20, 35),
-	ToggleEnabled = Color3.fromRGB(255, 120, 50),
-	ToggleDisabled = Color3.fromRGB(90, 70, 90),
-	ToggleEnabledStroke = Color3.fromRGB(255, 160, 80),
-	ToggleDisabledStroke = Color3.fromRGB(100, 80, 110),
-	ToggleEnabledOuterStroke = Color3.fromRGB(70, 40, 20),
-	ToggleDisabledOuterStroke = Color3.fromRGB(50, 30, 60),
+	-- Toggles
+	ToggleBackground = Color3.fromRGB(14, 18, 28),
+	ToggleEnabled = Color3.fromRGB(0, 185, 255), -- icy blue
+	ToggleDisabled = Color3.fromRGB(70, 80, 105),
+	ToggleEnabledStroke = Color3.fromRGB(150, 220, 255),
+	ToggleDisabledStroke = Color3.fromRGB(90, 110, 140),
+	ToggleEnabledOuterStroke = Color3.fromRGB(24, 40, 70),
+	ToggleDisabledOuterStroke = Color3.fromRGB(20, 26, 42),
 
-	DropdownSelected = Color3.fromRGB(40, 25, 50),
-	DropdownUnselected = Color3.fromRGB(30, 20, 40),
+	-- Dropdowns
+	DropdownSelected = Color3.fromRGB(24, 32, 52),
+	DropdownUnselected = Color3.fromRGB(16, 24, 40),
 
-	InputBackground = Color3.fromRGB(25, 15, 35),
-	InputStroke = Color3.fromRGB(70, 40, 90),
+	-- Inputs
+	InputBackground = Color3.fromRGB(16, 22, 36),
+	InputStroke = Color3.fromRGB(70, 150, 210),
 }
+
 -- Rayfield UI (prefixed locals)
 local BRVS_Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 local BRVS_Window = BRVS_Rayfield:CreateWindow({
-	Name = "Build A Zoo [🎃HW UPD 32] | HrafnHub",
+	Name = "[🔁]Build a Zoo | HrafnHub",
 	Icon = "egg",
-	LoadingTitle = "Summoning spooky fishes...",
-	LoadingSubtitle = "by HrafnHub 🎃",
+	LoadingTitle = "Spinning up arctic circuits...",
+	LoadingSubtitle = "by HrafnHub",
 	ShowText = "UI HrafnHub",
 	Theme = BRVS_Theme,
 	ToggleUIKeybind = "K",
@@ -813,6 +826,109 @@ local BRVS_Window = BRVS_Rayfield:CreateWindow({
 	Discord = { Enabled = false },
 	KeySystem = false,
 })
+
+--========================================================
+-- OPTIONAL: faint pulse for glow (safe & subtle)
+-- Set to true to enable if Rayfield exposes instances inside PlayerGui.
+local ENABLE_PULSE = true
+
+if ENABLE_PULSE then
+	task.spawn(function()
+		local TweenService = game:GetService("TweenService")
+		local Players = game:GetService("Players")
+		local pgui = Players.LocalPlayer:WaitForChild("PlayerGui", 5)
+		if not pgui then
+			return
+		end
+
+		-- Utility: add soft UIStroke if missing
+		local function ensureStroke(frame)
+			if not frame or not frame:IsA("GuiObject") then
+				return nil
+			end
+			local stroke = frame:FindFirstChildOfClass("UIStroke")
+			if not stroke then
+				stroke = Instance.new("UIStroke")
+				stroke.Thickness = 1
+				stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+				stroke.Transparency = 0.75
+				stroke.Color = Color3.fromRGB(120, 210, 255)
+				stroke.Parent = frame
+			end
+			return stroke
+		end
+
+		-- Collect candidate parts (sliders/toggles) under Rayfield UI
+		local candidates = {}
+		for _, inst in ipairs(pgui:GetDescendants()) do
+			if inst:IsA("Frame") or inst:IsA("TextButton") or inst:IsA("ImageButton") then
+				local n = inst.Name:lower()
+				if n:find("slider") or n:find("toggle") then
+					table.insert(candidates, inst)
+					ensureStroke(inst)
+				end
+			end
+		end
+
+		-- Gentle looped pulse: slightly brighten stroke + background
+		local brighten = 0.06 -- color bump (kept tiny)
+		local baseTime = 1.6 -- seconds per half-cycle
+
+		-- Safe Lerp helper
+		local function bumpColor(c)
+			return Color3.new(
+				math.clamp(c.R + brighten, 0, 1),
+				math.clamp(c.G + brighten, 0, 1),
+				math.clamp(c.B + brighten, 0, 1)
+			)
+		end
+
+		while #candidates > 0 do
+			for _, obj in ipairs(candidates) do
+				if obj and obj.Parent then
+					-- Pulse stroke transparency & optional background color
+					local stroke = obj:FindFirstChildOfClass("UIStroke")
+					if stroke then
+						local t1 = TweenService:Create(
+							stroke,
+							TweenInfo.new(baseTime, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+							{ Transparency = 0.6 }
+						)
+						local t2 = TweenService:Create(
+							stroke,
+							TweenInfo.new(baseTime, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+							{ Transparency = 0.8 }
+						)
+						t1:Play()
+						t1.Completed:Wait()
+						t2:Play()
+						t2.Completed:Wait()
+					end
+					if obj:IsA("Frame") then
+						local from = obj.BackgroundColor3
+						local to = bumpColor(from)
+						local up = TweenService:Create(
+							obj,
+							TweenInfo.new(baseTime, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+							{ BackgroundColor3 = to }
+						)
+						local down = TweenService:Create(
+							obj,
+							TweenInfo.new(baseTime, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+							{ BackgroundColor3 = from }
+						)
+						up:Play()
+						up.Completed:Wait()
+						down:Play()
+						down.Completed:Wait()
+					end
+				end
+			end
+			task.wait(0.05)
+		end
+	end)
+end
+
 
 -- =================== TAB: Inventory (Paragraph-based) ===================
 local BRVS_InvTab = BRVS_Window:CreateTab("Inventory", "box")
