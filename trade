@@ -1,6 +1,6 @@
 -- CS_TradeAuto_MinimalWithPetPick.client.lua
 -- Auto trade with pet scan/focus, pause at 0/x, resume at full cap, and multi-name auto-accept.
-task.wait(15)
+task.wait(40)
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -113,16 +113,9 @@ local function waitIslandName()
 	return LocalPlayer:GetAttribute("AssignedIslandName")
 end
 
--- Wait for island name (same logic you already have)
-local cumawait = waitIslandName()
-
 -- Build the new path dynamically
-local auto = workspace.Art
-	:WaitForChild(cumawait)
-	:WaitForChild("ENV")
-	:WaitForChild("TradeZone")
-	:WaitForChild("Zone")
-	:WaitForChild("Kitsune")
+local auto =
+	LocalPlayer:WaitForChild("PlayerGui"):WaitForChild("OverlaySafe"):WaitForChild("Right"):WaitForChild("Candy")
 
 local function getCountLabel()
 	local islandName = waitIslandName()
