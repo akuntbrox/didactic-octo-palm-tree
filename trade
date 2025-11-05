@@ -1,5 +1,6 @@
 -- CS_TradeAuto_MinimalWithPetPick.client.lua
 -- Auto trade with pet scan/focus, pause at 0/x, resume at full cap, and multi-name auto-accept.
+task.wait(15)
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -122,10 +123,6 @@ local auto = workspace.Art
 	:WaitForChild("TradeZone")
 	:WaitForChild("Zone")
 	:WaitForChild("Kitsune")
-
-if auto then
-	task.wait(7)
-end
 
 local function getCountLabel()
 	local islandName = waitIslandName()
@@ -668,7 +665,7 @@ task.spawn(function()
 			print(
 				"[AutoTrade] Startup: not full ("
 					.. tostring(label.Text)
-					.. ") → teleporting Home while waiting for full NPC."
+					.. ") → teleporting Home while waiting for 10/10."
 			)
 			safeFire(CharacterRE, "Teleport", "Home")
 		end
