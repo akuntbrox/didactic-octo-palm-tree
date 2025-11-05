@@ -14,6 +14,48 @@ local Remote = ReplicatedStorage:WaitForChild("Remote")
 local TradeRE = Remote:WaitForChild("TradeRE")
 local CharacterRE = Remote:WaitForChild("CharacterRE")
 
+-- === Safe Remote wrappers ===
+local function _sanitizeArg(a)
+	local t = typeof(a)
+	if t == "function" then
+		return nil, "function"
+	elseif t == "table" then
+		local clean = {}
+		for k, v in pairs(a) do
+			if typeof(v) ~= "function" then
+				clean[k] = v
+			end
+		end
+		return clean
+	else
+		return a
+	end
+end
+
+local function safeFire(remote, ...)
+	if not remote or typeof(remote) ~= "Instance" or remote.ClassName ~= "RemoteEvent" then
+		warn("[AutoTrade] safeFire: invalid remote", remote and typeof(remote), remote and remote.ClassName)
+		return false
+	end
+	local raw = { ... }
+	local args = {}
+	for i = 1, #raw do
+		local a, bad = _sanitizeArg(raw[i])
+		if bad then
+			warn(string.format("[AutoTrade] safeFire: dropped arg #%d of type %s", i, bad))
+		end
+		args[#args + 1] = a
+	end
+	local ok, err = pcall(function()
+		remote:FireServer(unpack(args))
+	end)
+	if not ok then
+		warn("[AutoTrade] safeFire failed:", err)
+	end
+	return ok
+end
+-- === End Safe Remote wrappers ===
+
 -- === CONFIG ===
 local TARGET_PET_NAMES = { "Toothless", "xxx", "zzx" } -- add your list here
 local MAX_BARGAINS_PER_TRADE = 2
@@ -21,10 +63,32 @@ local DECISION_DELAY = 1.0
 local TELEPORT_Y_OFFSET = -1
 local PAUSE_WHEN_ZERO = true
 local bargainedOnce = false -- remember that we already bargained once
-local homedWhileWaiting = true -- NEW: teleport-home-once debounce
+local homedWhileWaiting = false -- NEW: teleport-home-once debounce
 
-local auto =
-	LocalPlayer:WaitForChild("PlayerGui"):WaitForChild("OverlaySafe"):WaitForChild("Right"):WaitForChild("Candy")
+-- Helper: force-close trade dialog UI locally
+local function _closeTradeUI()
+	local Players = game:GetService("Players")
+	local LocalPlayer = Players.LocalPlayer
+	local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+	if pg then
+		for _, gui in ipairs(pg:GetDescendants()) do
+			if gui:IsA("ScreenGui") or gui:IsA("SurfaceGui") then
+				local root = gui:FindFirstChild("Root")
+				if root and root:FindFirstChild("Accept") and root:FindFirstChild("Decline") then
+					gui.Enabled = false
+				end
+			end
+		end
+	end
+	-- If the dialog script exposed a closer, use it too (safer)
+	local ok = false
+	if shared and type(shared.S_CloseDialogTrade) == "function" then
+		ok = pcall(shared.S_CloseDialogTrade)
+	end
+	if (not ok) and _G and type(_G.S_CloseDialogTrade) == "function" then
+		pcall(_G.S_CloseDialogTrade)
+	end
+end
 
 -- NEW:
 local TRADE_RESTART_DELAY = 3 -- small delay before attempting next trade
@@ -46,6 +110,21 @@ local function waitIslandName()
 		task.wait()
 	end
 	return LocalPlayer:GetAttribute("AssignedIslandName")
+end
+
+-- Wait for island name (same logic you already have)
+local cumawait = waitIslandName()
+
+-- Build the new path dynamically
+local auto = workspace.Art
+	:WaitForChild(cumawait)
+	:WaitForChild("ENV")
+	:WaitForChild("TradeZone")
+	:WaitForChild("Zone")
+	:WaitForChild("Kitsune")
+
+if auto then
+	task.wait(7)
 end
 
 local function getCountLabel()
@@ -282,7 +361,7 @@ local function focusUID(uid)
 
 	local args = { "Focus", uid }
 	print("[AutoTrade] Focus ->", uid)
-	CharacterRE:FireServer(unpack(args))
+	safeFire(CharacterRE, "Focus", uid)
 	return true
 end
 
@@ -295,7 +374,7 @@ local function clearHand()
 
 	local args = { "Focus" }
 	print("[AutoTrade] Focus ->")
-	CharacterRE:FireServer(unpack(args))
+	safeFire(CharacterRE, "Focus", uid)
 	return true
 end
 
@@ -413,11 +492,9 @@ local function decideAndAct(payload)
 	-- Rule 1: trader offers target pet -> accept
 	if traderHasAnyTargetName(core.trader) then
 		print("[AutoTrade] Target name matched → ACCEPT")
-		TradeRE:FireServer({ event = "accept" })
+		safeFire(TradeRE, { event = "accept" })
+		_closeTradeUI()
 		task.wait(0.2)
-		if AUTO_TELEPORT_HOME_ON_ACCEPT then
-			CharacterRE:FireServer("Teleport", "Home")
-		end
 		acceptedOrDeclined = true
 		currentlyTrading = false
 		afterTradeTeleportAndContinue()
@@ -427,11 +504,9 @@ local function decideAndAct(payload)
 	-- Rule 2: my value < trader value -> accept immediately
 	if myVal < traderVal then
 		print("[AutoTrade] MyValue < TraderValue → ACCEPT immediately")
-		TradeRE:FireServer({ event = "accept" })
+		safeFire(TradeRE, { event = "accept" })
+		_closeTradeUI()
 		task.wait(0.2)
-		if AUTO_TELEPORT_HOME_ON_ACCEPT then
-			CharacterRE:FireServer("Teleport", "Home")
-		end
 		acceptedOrDeclined = true
 		currentlyTrading = false
 		afterTradeTeleportAndContinue()
@@ -441,9 +516,12 @@ local function decideAndAct(payload)
 	-- Rule 3: my value > trader value -> bargain once
 	if myVal > traderVal and not bargainedOnce then
 		task.wait(0.2)
-		print("[AutoTrade] MyValue > TraderValue → BARGAIN once")
+		print("[AutoTrade] MyValue > TraderValue → DECLINE")
 		bargainedOnce = true
-		TradeRE:FireServer({ event = "decline" })
+		acceptedOrDeclined = true
+		currentlyTrading = false
+		afterTradeTeleportAndContinue()
+		return
 	end
 end
 
@@ -451,7 +529,7 @@ end
 afterTradeTeleportAndContinue = function()
 	task.spawn(function()
 		print("[AutoTrade] Teleporting Home after trade...")
-		CharacterRE:FireServer("Teleport", "Home")
+		safeFire(CharacterRE, "Teleport", "Home")
 		task.wait(2)
 
 		local uid = chooseLowestProduceUID()
@@ -499,7 +577,6 @@ TradeRE.OnClientEvent:Connect(function(payload)
 				traderVal = traderVal + getProduce(v)
 			end
 			print(("[AutoTrade] Bargain failed -> My=%d | Trader=%d → DECLINE"):format(myVal, traderVal))
-			TradeRE:FireServer({ event = "decline" })
 			acceptedOrDeclined = true
 			currentlyTrading = false
 			afterTradeTeleportAndContinue() -- NEW: queue the next trade
@@ -525,18 +602,13 @@ TradeRE.OnClientEvent:Connect(function(payload)
 		task.wait(0.3)
 		if traderVal < myVal then
 			print("[AutoTrade] Trader still worse after 1x bargain → DECLINE")
-			TradeRE:FireServer({ event = "decline" })
 		elseif myVal < traderVal then
 			print("[AutoTrade] Trader better after 1x bargain → ACCEPT")
-			TradeRE:FireServer({ event = "accept" })
+			safeFire(TradeRE, { event = "accept" })
+			_closeTradeUI()
 		else
 			print("[AutoTrade] Equal values after bargain → DECLINE")
-			TradeRE:FireServer({ event = "decline" })
-			-- TradeRE:FireServer({ event = "accept" })
-		end
-
-		if AUTO_TELEPORT_HOME_ON_ACCEPT then
-			CharacterRE:FireServer("Teleport", "Home")
+			-- safeFire(TradeRE, { event = "accept" })
 		end
 		acceptedOrDeclined = true
 		currentlyTrading = false
@@ -580,7 +652,7 @@ task.spawn(function()
 						.. tostring(label.Text)
 						.. ") → teleporting Home while waiting for 10/10."
 				)
-				CharacterRE:FireServer("Teleport", "Home")
+				safeFire(CharacterRE, "Teleport", "Home")
 			end
 		end
 	end)
@@ -596,9 +668,9 @@ task.spawn(function()
 			print(
 				"[AutoTrade] Startup: not full ("
 					.. tostring(label.Text)
-					.. ") → teleporting Home while waiting for 10/10."
+					.. ") → teleporting Home while waiting for full NPC."
 			)
-			CharacterRE:FireServer("Teleport", "Home")
+			safeFire(CharacterRE, "Teleport", "Home")
 		end
 	end
 end)
